@@ -1,13 +1,6 @@
 import asyncio
 
 import actionengine
-import torch
-from diffusers import (
-    AutoencoderKL,
-    UNet2DConditionModel,
-    StableDiffusionPipeline,
-    UniPCMultistepScheduler,
-)
 from pydantic import BaseModel
 
 
@@ -29,6 +22,9 @@ IDX = 0
 
 
 def get_unet():
+    import torch
+    from diffusers import UNet2DConditionModel
+
     model_candidates = (
         "/opt/durer/data/checkpoints_diffusers/267b356f-7a31-432b-80cd-bc5b3952091f",
         "/home/ubuntu/267b356f-7a31-432b-80cd-bc5b3952091f",
@@ -58,6 +54,9 @@ def get_unet():
 
 
 def get_vae():
+    import torch
+    from diffusers import AutoencoderKL
+
     model_id = "stabilityai/sd-vae-ft-ema"
     device = "cpu"
     if torch.backends.mps.is_available():
@@ -74,7 +73,10 @@ def get_vae():
     return vae
 
 
-def get_pipeline(idx: int = 0) -> StableDiffusionPipeline:
+def get_pipeline(idx: int = 0) -> "StableDiffusionPipeline":
+    import torch
+    from diffusers import StableDiffusionPipeline, UniPCMultistepScheduler
+
     if not hasattr(get_pipeline, "pipe0"):
         device = "cpu"
         if torch.backends.mps.is_available():
@@ -137,6 +139,8 @@ def make_progress_callback(action: actionengine.Action):
 
 
 async def run(action: actionengine.Action):
+    import torch
+
     request: DiffusionRequest = await action["request"].consume()
 
     print("Running text_to_image with request:", str(request), flush=True)

@@ -68,6 +68,11 @@ class ChunkStoreWriter {
 
   absl::StatusOr<int> Put(Chunk value, int seq, bool final);
 
+  [[nodiscard]] bool AcceptsPuts() const {
+    act::MutexLock lock(&mu_);
+    return accepts_puts_;
+  }
+
   template <typename T>
   absl::StatusOr<int> Put(T value, int seq = -1, bool final = false) {
     auto chunk = ToChunk(std::move(value));
@@ -97,6 +102,13 @@ class ChunkStoreWriter {
   void WaitForBufferToDrain() {
     act::MutexLock lock(&mu_);
     WaitForBufferToDrainInternal();
+  }
+
+  void FlushCurrentBuffer() {
+    act::MutexLock lock(&mu_);
+    while (buffer_.length() > 0) {
+      cv_.Wait(&mu_);
+    }
   }
 
   void Join() {

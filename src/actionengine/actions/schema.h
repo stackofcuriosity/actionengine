@@ -33,7 +33,7 @@
 
 namespace act {
 class Action;
-}
+}  // namespace act
 
 /** @file
  *  @brief
@@ -48,11 +48,7 @@ class Action;
 
 namespace act {
 
-using ActionHandler =
-    std::function<absl::Status(const std::shared_ptr<Action>&)>;
-
-// A type for Python and other bindings that cannot use absl::Status
-using VoidActionHandler = std::function<void(const std::shared_ptr<Action>&)>;
+using ActionHandler = std::function<absl::Status(std::shared_ptr<Action>)>;
 
 using NameAndMimetype = std::pair<std::string, std::string>;
 using NameToMimetype = absl::flat_hash_map<std::string, std::string>;
@@ -81,6 +77,14 @@ struct ActionSchema {
    */
   absl::StatusOr<ActionMessage> GetActionMessage(
       std::string_view action_id) const;
+
+  [[nodiscard]] bool HasInput(std::string_view input_name) const {
+    return inputs.contains(input_name);
+  }
+
+  [[nodiscard]] bool HasOutput(std::string_view output_name) const {
+    return outputs.contains(output_name);
+  }
 
   /** The action's name that is used to register it in the ActionRegistry. */
   std::string name;

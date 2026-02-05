@@ -125,8 +125,7 @@ class ActionRegistry {
    *   An owning pointer to the newly created Action instance.
    */
   absl::StatusOr<std::unique_ptr<Action>> MakeAction(
-      std::string_view name, std::string_view action_id = "",
-      std::vector<Port> inputs = {}, std::vector<Port> outputs = {});
+      std::string_view name, std::string_view action_id = "");
 
   /** @brief
    *    Gets the schema of the action with the given name.

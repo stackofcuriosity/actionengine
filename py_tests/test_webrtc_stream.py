@@ -85,3 +85,11 @@ async def test_webrtc_stream_works():
         if webrtc_server:
             webrtc_server.cancel()
             await asyncio.to_thread(webrtc_server.join)
+
+
+async def main():
+    await test_webrtc_stream_works()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

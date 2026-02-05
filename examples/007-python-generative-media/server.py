@@ -18,6 +18,11 @@ def make_action_registry():
         actions.gemini.run_rehydrate_session,
     )
     registry.register(
+        "infer_updated_facts",
+        actions.memory.INFER_UPDATED_FACTS_SCHEMA,
+        actions.memory.infer_updated_facts,
+    )
+    registry.register(
         "generate_content",
         actions.gemini.GENERATE_CONTENT_SCHEMA,
         actions.gemini.generate_content,

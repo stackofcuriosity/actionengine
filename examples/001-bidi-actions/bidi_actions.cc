@@ -69,7 +69,7 @@ absl::Status RunPrint(const std::shared_ptr<Action>& action) {
 }
 
 absl::Status RunBidiEcho(const std::shared_ptr<Action>& action) {
-  ASSIGN_OR_RETURN(const std::unique_ptr<Action> print_action,
+  ASSIGN_OR_RETURN(const std::shared_ptr print_action,
                    action->MakeActionInSameSession("print_text"));
   if (auto status = print_action->Call(); !status.ok()) {
     return status;
@@ -138,6 +138,7 @@ absl::Status Main(int argc, char** argv) {
   ASSIGN_OR_RETURN(std::shared_ptr<act::WireStream> stream,
                    act::net::MakeWebsocketWireStream("localhost", port));
 
+  RETURN_IF_ERROR(stream->Start());
   session.StartStreamHandler(stream->GetId(), stream);
 
   std::cout << absl::StrFormat(
@@ -155,11 +156,11 @@ absl::Status Main(int argc, char** argv) {
       break;
     }
 
-    ASSIGN_OR_RETURN(const std::unique_ptr<Action> action,
+    ASSIGN_OR_RETURN(const std::shared_ptr action,
                      action_registry.MakeAction("bidi_echo"));
-    action->BindNodeMap(&node_map);
-    action->BindSession(&session);
-    action->BindStream(stream.get());
+    action->mutable_bound_resources()->set_node_map_non_owning(&node_map);
+    action->mutable_bound_resources()->set_session_non_owning(&session);
+    action->mutable_bound_resources()->set_stream_non_owning(stream.get());
 
     RETURN_IF_ERROR(action->Call());
 
@@ -170,8 +171,9 @@ absl::Status Main(int argc, char** argv) {
     }
     RETURN_IF_ERROR(text_input->Put(act::EndOfStream()));
 
-    act::SleepFor(absl::Seconds(kDelayBetweenWords *
-                                (static_cast<double>(words.size()) + 2.0)));
+    RETURN_IF_ERROR(action->Await(absl::Seconds(
+        kDelayBetweenWords * (static_cast<double>(words.size()) + 2.0))));
+
     std::cout << std::endl;
   }
 

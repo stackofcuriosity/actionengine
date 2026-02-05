@@ -35,48 +35,6 @@
 
 namespace act {
 
-class ActionContext {
- public:
-  static constexpr absl::Duration kFiberCancellationTimeout = absl::Seconds(3);
-  static constexpr absl::Duration kActionDetachTimeout = absl::Seconds(10);
-
-  ActionContext() = default;
-  ~ActionContext();
-
-  absl::Status Dispatch(std::shared_ptr<Action> action);
-
-  std::vector<std::shared_ptr<Action>> ListRunningActions() const;
-
-  void CancelAction(Action* absl_nonnull action);
-  absl::Status CancelAction(std::string_view action_id);
-
-  void CancelContext();
-
-  void WaitForActionsToDetach(
-      absl::Duration cancel_timeout = kFiberCancellationTimeout,
-      absl::Duration detach_timeout = kActionDetachTimeout);
-
- private:
-  void CancelActionInternal(Action* absl_nonnull action)
-      ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
-  void CancelContextInternal() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
-
-  std::unique_ptr<thread::Fiber> ExtractActionFiber(Action* absl_nonnull action)
-      ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
-
-  void WaitForActionsToDetachInternal(
-      absl::Duration cancel_timeout = kFiberCancellationTimeout,
-      absl::Duration detach_timeout = kActionDetachTimeout)
-      ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
-
-  mutable act::Mutex mu_;
-  absl::flat_hash_map<Action*, std::unique_ptr<thread::Fiber>> running_actions_
-      ABSL_GUARDED_BY(mu_);
-  absl::flat_hash_map<std::string, Action*> actions_by_id_ ABSL_GUARDED_BY(mu_);
-  bool cancelled_ ABSL_GUARDED_BY(mu_) = false;
-  act::CondVar cv_ ABSL_GUARDED_BY(mu_);
-};
-
 struct StreamDispatchTask {
   std::shared_ptr<WireStream> stream;
   std::unique_ptr<thread::Fiber> fiber;
@@ -162,6 +120,9 @@ class ConnectionCtx {
 
 class Session {
  public:
+  friend class ActionExecutionContext;
+  friend class Action;
+
   Session() = default;
   ~Session();
 
@@ -204,7 +165,7 @@ class Session {
   absl::Status DispatchWireMessage(
       WireMessage message, WireStream* absl_nullable origin_stream = nullptr);
 
-  void CancelAllActions() { action_context_.CancelContext(); }
+  void CancelAllActions();
 
   size_t GetNumActiveConnections() const;
 
@@ -220,7 +181,13 @@ class Session {
  private:
   mutable act::Mutex mu_;
 
-  absl::Status DispatchNodeFragmentInternal(NodeFragment node_fragment) const
+  absl::Status RecordActionCall(std::string_view id,
+                                std::shared_ptr<Action> action);
+  absl::StatusOr<std::shared_ptr<Action>> ExtractAction(std::string_view id);
+  absl::StatusOr<std::shared_ptr<Action>> ExtractAction_(std::string_view id)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
+
+  absl::Status DispatchNodeFragmentInternal(NodeFragment node_fragment)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
 
   absl::Status DispatchReservedActionInternal(
@@ -236,6 +203,7 @@ class Session {
   absl::Status DispatchWireMessageInternal(
       WireMessage message, WireStream* absl_nullable origin_stream = nullptr)
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
+  bool finalizing_ ABSL_GUARDED_BY(mu_) = false;
 
   absl::flat_hash_map<std::string, std::unique_ptr<internal::ConnectionCtx>>
       connections_ ABSL_GUARDED_BY(mu_);
@@ -243,7 +211,8 @@ class Session {
   std::optional<ActionRegistry> action_registry_ ABSL_GUARDED_BY(mu_);
   NodeMap* absl_nullable node_map_ ABSL_GUARDED_BY(mu_) = nullptr;
 
-  ActionContext action_context_;
+  absl::flat_hash_map<std::string, std::shared_ptr<Action>> actions_
+      ABSL_GUARDED_BY(mu_);
 };
 
 }  // namespace act

@@ -220,8 +220,6 @@ class ChunkStoreReader {
   absl::Status GetStatus() const;
 
  private:
-  friend class Action;
-
   void EnsurePrefetchIsRunningOrHasCompleted()
       ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
 

@@ -254,7 +254,8 @@ class Redis {
                       absl::flat_hash_set<std::shared_ptr<Subscription>>>
       subscriptions_ ABSL_GUARDED_BY(mu_);
   absl::flat_hash_map<std::string, Script> scripts_ ABSL_GUARDED_BY(mu_);
-  std::unique_ptr<redisAsyncContext, internal::RedisContextDeleter> context_;
+  std::unique_ptr<redisAsyncContext, internal::RedisContextDeleter> context_ =
+      nullptr;
 };
 
 template <typename T>

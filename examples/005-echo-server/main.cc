@@ -28,7 +28,7 @@ using Chunk = act::Chunk;
 using Service = act::Service;
 
 absl::Status RunEcho(const std::shared_ptr<Action>& action) {
-  const auto input_text = action->GetNode("text");
+  const auto input_text = action->GetInput("text");
   input_text->SetReaderOptions({.ordered = true, .remove_chunks = true});
   std::optional<Chunk> chunk;
   while (true) {
@@ -43,11 +43,11 @@ absl::Status RunEcho(const std::shared_ptr<Action>& action) {
       return status;
     }
 
-    action->GetNode("response") << *chunk;
+    action->GetOutput("response") << *chunk;
   }
 
   // This is necessary and indicates the end of stream.
-  action->GetNode("response") << act::EndOfStream();
+  action->GetOutput("response") << act::EndOfStream();
 
   return absl::OkStatus();
 }

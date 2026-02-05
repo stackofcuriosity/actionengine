@@ -39,409 +39,310 @@
 #include "actionengine/stores/chunk_store_reader.h"
 
 namespace act {
+
 class Session;
-}  // namespace act
+class ActionExecutionContext;
+class Action;
 
-/** @file
- *  @brief
- *    An interface for ActionEngine Action launch helper / handler context.
- *
- * This file contains the definition of the Action class, which is used to
- * call ActionEngine actions and provide context in handlers (e.g. node map,
- * session, stream).
- */
+struct ActionRunState {
+  std::unique_ptr<thread::Fiber> fiber;
+  std::optional<absl::Status> run_result;
+};
 
-namespace act {
+struct ActionCallState {
+  std::optional<absl::Status> dispatch_status;
+  std::unique_ptr<thread::PermanentEvent> dispatched{
+      std::make_unique<thread::PermanentEvent>()};
 
-/** An accessor class for an ActionEngine action.
- *
- * This class provides an interface for creating and managing actions in the
- * ActionEngine V2 format. It includes methods for setting up input and output nodes,
- * calling the action, and running the action handler.
- * @headerfile actionengine/actions/action.h
- */
+  std::optional<absl::Status> completion_status;
+  std::unique_ptr<thread::PermanentEvent> completed{
+      std::make_unique<thread::PermanentEvent>()};
+
+  bool successfully_cancelled_on_remote = false;
+};
+
+using RunOrCallState = std::variant<ActionRunState, ActionCallState>;
+
+class ActionBoundResources {
+ public:
+  static ActionBoundResources SameAs(const ActionBoundResources& other);
+  /**
+   * Destructor simply ensures the correct order of destruction in case
+   * of owning resources:
+   *
+   * node_map_ -> stream_ -> session_ -> registry_.
+   */
+  ~ActionBoundResources();
+
+  [[nodiscard]] NodeMap* absl_nullable node_map() const;
+  [[nodiscard]] std::shared_ptr<NodeMap> borrow_node_map() const;
+  void set_node_map(std::shared_ptr<NodeMap> node_map);
+  void set_node_map_non_owning(NodeMap* absl_nullable node_map);
+
+  [[nodiscard]] WireStream* absl_nullable stream() const;
+  [[nodiscard]] std::shared_ptr<WireStream> borrow_stream() const;
+  void set_stream(std::shared_ptr<WireStream> stream);
+  void set_stream_non_owning(WireStream* absl_nullable stream);
+
+  [[nodiscard]] Session* absl_nullable session() const;
+  [[nodiscard]] std::shared_ptr<Session> borrow_session() const;
+  void set_session(std::shared_ptr<Session> session);
+  void set_session_non_owning(Session* absl_nullable session);
+
+  [[nodiscard]] ActionRegistry* absl_nullable registry() const;
+  [[nodiscard]] std::shared_ptr<ActionRegistry> borrow_registry() const;
+  void set_registry(std::shared_ptr<ActionRegistry> registry);
+  void set_registry_non_owning(ActionRegistry* absl_nullable registry);
+
+ private:
+  std::shared_ptr<NodeMap> node_map_;
+  std::shared_ptr<WireStream> stream_;
+  std::shared_ptr<Session> session_;
+  std::shared_ptr<ActionRegistry> registry_;
+};
+
+class ActionExecutionContext {
+ public:
+  friend class Action;
+
+  ActionExecutionContext() = default;
+  ~ActionExecutionContext();
+
+  // non-copyable, non-moveable
+  ActionExecutionContext& operator=(const ActionExecutionContext&) = delete;
+  ActionExecutionContext(const ActionExecutionContext&) = delete;
+
+  /**
+   * Initialise action run state
+   *
+   * @param state Action state that's exclusive to being run: run status,
+   *   running fiber, etc.
+   * @return absl::OkStatus() if the action is successfully recorded as running,
+   *   an error status otherwise.
+   */
+  absl::Status RecordRun(ActionRunState state);
+
+  absl::Status RecordCall(ActionCallState state);
+
+  /**
+   * Cancel the action if it is still in progress.
+   *
+   * For non-started or completed actions, this function will set cancellation
+   * events and make HasBeenCancelled() return true, but will not prevent
+   * the handler from running.
+   *
+   * For actions that are called (so run remotely), this function will notify
+   * the local cancellation event immediately, then make a remote cancellation
+   * request. HasBeenCancelled() will only return true after the remote
+   * cancellation request is completed successfully.
+   *
+   * For actions that have already been cancelled, this function depends on
+   * whether they are run or called. For unstarted or locally run actions,
+   * it will return immediately with success. For called actions, it will
+   * first notify the local cancellation event (if not already notified),
+   * then make a remote cancellation request, and return its status.
+   *
+   * Successful cancellations are idempotent, local OR remote.
+   *
+   * @return absl::Status indicating success or failure
+   */
+  absl::Status Cancel();
+
+  // Status is an output parameter to be able to distinguish a DeadlineError
+  // coming from awaiting too long and a DeadlineError as an execution result.
+  absl::Status Await(absl::Status* absl_nonnull status_out,
+                     absl::Time deadline = absl::InfiniteFuture());
+
+  absl::StatusOr<thread::Case> OnDone() const;
+  [[nodiscard]] bool IsDone() const;
+  [[nodiscard]] bool HasBeenCancelled() const;
+  [[nodiscard]] bool HasBeenRun() const;
+  [[nodiscard]] bool HasBeenCalled() const;
+
+  absl::Status SetDispatchStatus(absl::Status status);
+  absl::Status SetCompletionStatus(absl::Status status);
+
+  ActionRunState* absl_nullable run_state();
+  ActionCallState* absl_nullable call_state();
+
+ private:
+  // Ensures that the action has been done, failed or cancelled, and the state
+  // is fully clear of any blocking waits.
+  void Finalize_() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
+
+  void RunHandlerWithPreparationAndCleanup(
+      ActionHandler handler, const std::shared_ptr<Action>& action)
+      ABSL_LOCKS_EXCLUDED(mu_);
+
+  void CommunicateHandlerStatus_(const std::shared_ptr<Action>& action,
+                                 absl::Status status)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
+
+  void ReleaseResourcesAfterRun_(const std::shared_ptr<Action>& action)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
+
+  [[nodiscard]] bool HasBeenRun_() const ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
+  [[nodiscard]] bool HasBeenCalled_() const ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
+
+  void CancelLocally_() const ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
+  absl::Status CancelRemotely_() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
+
+  [[nodiscard]] bool CancelledLocally_() const
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
+  [[nodiscard]] bool CancelledSuccessfullyOnRemote_() const
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
+
+  absl::Status AwaitRun_(absl::Time deadline,
+                         absl::Status* absl_nonnull status_out)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
+  absl::Status AwaitCall_(absl::Time deadline,
+                          absl::Status* absl_nonnull status_out)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
+
+  void MarkAsOutput_(std::shared_ptr<AsyncNode> node)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
+  void MarkAsInput_(std::shared_ptr<AsyncNode> node)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
+
+  void SetOnCancelled(absl::AnyInvocable<void()> callback)
+      ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
+
+  mutable act::Mutex mu_;
+  bool cancelled_ ABSL_GUARDED_BY(mu_) = false;
+  bool joined_ ABSL_GUARDED_BY(mu_) = false;
+  bool detached_ ABSL_GUARDED_BY(mu_) = false;
+  std::optional<RunOrCallState> progress_state_ ABSL_GUARDED_BY(mu_);
+
+  absl::flat_hash_map<std::string, std::string> input_name_to_id_;
+  absl::flat_hash_map<std::string, std::string> output_name_to_id_;
+
+  // Maintains a collection of nodes that have been registered as outputs.
+  // On an unsuccessful run, these nodes will be notified of the failure.
+  absl::flat_hash_set<std::shared_ptr<AsyncNode>> output_nodes_
+      ABSL_GUARDED_BY(mu_);
+
+  // Maintains a collection of nodes that have been registered as inputs.
+  // On failure or cancellation, the readers of these nodes will be cancelled.
+  absl::flat_hash_set<std::shared_ptr<AsyncNode>> input_nodes_
+      ABSL_GUARDED_BY(mu_);
+
+  absl::AnyInvocable<void()> on_cancelled_;
+};
+
+struct ActionSettings {
+  // the default settings are for callers, so that if inputs are set
+  // before calling the action, they are still streamed correctly to the
+  // other party.
+  bool bind_streams_on_inputs_by_default = true;
+  bool bind_streams_on_outputs_by_default = false;
+
+  bool clear_inputs_after_run = false;
+  bool clear_outputs_after_run = false;
+};
+
 class Action : public std::enable_shared_from_this<Action> {
  public:
-  /** @brief
-   *    Constructor. Creates an action in the context given by \p node_map,
-   *    \p stream, and \p session.
-   *
-   * Creates an action with the given schema, handler, ID, node map, stream,
-   * and session. The ID is generated if not provided, and other parameters are
-   * nullable, and if not provided, restrictions apply, however, it makes the
-   * Action class unified for client and server-side usage.
-   *
-   * @param schema
-   *   The action schema. Required to resolve input and output node types,
-   *   as well as to create the action message on call.
-   * @param id
-   *   The action ID. If empty, a unique ID will be generated.
-   * @param inputs
-   *   A mapping of input names to node IDs. If empty, the IDs will be generated
-   *   based on the schema.
-   * @param outputs
-   *   A mapping of output names to node IDs. If empty, the IDs will be
-   *   generated based on the schema.
-   */
-  explicit Action(ActionSchema schema, std::string_view id = "",
-                  std::vector<Port> inputs = {},
-                  std::vector<Port> outputs = {});
+  // This class is not strictly thread-compatible, as it does nothing to prevent
+  // races between changing action settings or headers and calling/running it.
+  // If changed definitely after execution, a warning is logged.
 
-  ~Action();
+  friend class Session;
 
   static std::string MakeNodeId(std::string_view action_id,
                                 std::string_view node_name);
 
-  /** @brief
-   *    Makes an action message to be sent on a WireStream.
-   *
-   * @return
-   *   The action message.
-   */
-  [[nodiscard]] ActionMessage GetActionMessage() const;
+  explicit Action(std::string_view id = "");
+  ~Action();
 
-  /** @brief
-   *    Gets an AsyncNode with the given \p id from the node map.
-   *
-   * The node does not have to be defined as an input or output of the action.
-   * If \p id does not exist on the action's schema, returns nullptr.
-   * @param id
-   *   The identifier of the node to get.
-   * @return
-   *   A pointer to the AsyncNode with the given \p id.
-   */
-  AsyncNode* absl_nullable GetNode(std::string_view id);
+  absl::Status Run(absl::Duration timeout = absl::InfiniteDuration());
+  absl::Status RunInBackground(bool detach = false);
 
-  /** @brief
-   *    Gets an AsyncNode input with the given name from the node map.
-   *    If no input with the given name is found, returns nullptr.
-   *
-   * @param name
-   *   The name of the input to get.
-   * @param bind_stream
-   *   If true, the stream will be bound to the input node. If unspecified,
-   *   the stream will be bound in Call(), but not Run().
-   * @return
-   *   A pointer to the AsyncNode of the input with the given name, or nullptr
-   *   if not on ActionSchema.
-   */
-  AsyncNode* absl_nullable GetInput(
-      std::string_view name, std::optional<bool> bind_stream = std::nullopt);
-
-  /** @brief
-   *    Gets an AsyncNode output with the given name from the node map.
-   *    If no output with the given name is found, returns nullptr.
-   *
-   * @param name
-   *   The name of the output to get.
-   * @param bind_stream
-   *   Whether to bind the stream to the output. If not specified, the stream
-   *   will be bound in Run() but not in Call().
-   * @return
-   *   A pointer to the AsyncNode of the output with the given name, or nullptr
-   *   if not on ActionSchema.
-   */
-  AsyncNode* absl_nullable GetOutput(
-      std::string_view name,
-      const std::optional<bool> bind_stream = std::nullopt) {
-    act::MutexLock lock(&mu_);
-    return GetOutputInternal(name, bind_stream);
-  }
-
-  /** @brief
-   *    Sets the action handler.
-   *
-   * @param handler
-   *   The action handler. This function will be called when the action is run
-   *   server-side or manually via Run().
-   */
-  void BindHandler(ActionHandler handler) { handler_ = std::move(handler); }
-
-  void BindNodeMap(NodeMap* absl_nullable node_map);
-
-  /** Returns the node map associated with the action. */
-  [[nodiscard]] NodeMap* absl_nullable GetNodeMap() const;
-
-  /** @brief
-    *   Binds a given stream to the action.
-    *
-    * The bound stream will be used to send the action message when Call() is
-    * invoked, and attach to output nodes when Run() is invoked, so that the
-    * nodes can send their data to the stream for another connected party
-    * over the network.
-    *
-    * @param stream
-    *   The stream to bind the action to. If nullptr, the action will not be
-    *   bound to any stream.
-    */
-  void BindStream(WireStream* absl_nullable stream);
-
-  /** Returns the stream bound to the action. */
-  [[nodiscard]] WireStream* absl_nullable GetStream() const;
-
-  /** @brief
-   *    Binds a session to the action.
-   *
-   * The session provides the action with an ActionRegistry to resolve
-   * nested actions by name, and is accessible to the action handler in case
-   * it needs to do custom logic based on the session.
-   *
-   * @param session
-   *   The session to bind the action to. If nullptr, the action will not be
-   *   bound to any session.
-   */
-  void BindSession(Session* absl_nullable session);
-
-  /** Returns the session bound to the action. */
-  [[nodiscard]] Session* absl_nullable GetSession() const;
-
-  /** @brief
-   *    Binds a registry to the action.
-   *
-   * The registry provides the action with a way to create nested actions
-   * by name, and is accessible to the action handler in case it needs to do
-   * custom logic based on the registry.
-   * @param registry
-   *   The registry to bind the action to. If nullptr, the action will not be
-   *   bound to any registry.
-   */
-  void BindRegistry(ActionRegistry* absl_nullable registry);
-
-  /** @brief
-   *    Makes a different action in the same session. Should be used to create
-   *    nested actions.
-   *
-   * An action created in this way will share the same session, node map, and
-   * stream as the current action.
-   * @param name
-   *   The name of the action to create. It must be registered in the
-   *   session's action registry.
-   * @param action_id
-   *   The ID of the action to create. If empty, a unique ID will be generated.
-   * @return
-   *   An owning pointer to the new action.
-   */
-  absl::StatusOr<std::unique_ptr<Action>> MakeActionInSameSession(
-      std::string_view name, std::string_view action_id = "") const;
-
-  /** Returns the action registry from the session. */
-  [[nodiscard]] ActionRegistry* absl_nullable GetRegistry() const;
-
-  /** Returns the action's identifier. */
-  [[nodiscard]] std::string GetId() const { return id_; }
-
-  [[nodiscard]] const ActionSchema& GetSchema() const { return schema_; }
-
-  /** @brief
-   *    Block until the action has been completed, either by being run or
-   *    called.
-   *
-   * If previously Run(), this method waits on a condition variable until
-   * the action handler has completed and returns the resulting status.
-   *
-   * If previously Call()-ed, this method waits until the status arrives to
-   * a special reserved output node named "__status__", and returns it.
-   *
-   * @return
-   *   The status returned by the action handler, or the error status if the
-   *   handler failed.
-   */
-  absl::Status Await(absl::Duration timeout = absl::InfiniteDuration());
-
-  /** @brief
-   *    Calls the action by sending an ActionEngine action message to associated
-   *    stream.
-   *
-   * This method should normally be called by the client. It only creates the
-   * message and sends it to the stream. The action handler is not called
-   * by this method. It makes sure that input nodes are bound to the stream.
-   *
-   * @return
-   *   The status of sending the action call message.
-   */
   absl::Status Call(
       absl::flat_hash_map<std::string, std::string> wire_message_headers = {});
 
-  absl::StatusOr<absl::Status> CallAndWaitForDispatchStatus(
-      absl::flat_hash_map<std::string, std::string> wire_message_headers = {});
+  absl::StatusOr<thread::Case> OnDone() const;
+  bool IsDone() const;
+  bool HasBeenRun() const;
+  bool HasBeenCalled() const;
+  bool HasBeenCancelled() const;
 
-  /** @brief
-   *    Run the action handler. Clients usually do not call this
-   *    method directly.
-   *
-   * Servers may want to call this method if they implement custom Session
-   * and/or Service logic. This method will call the action handler and
-   * make sure output nodes are bound to the stream.
-   *
-   * @return
-   *   The status returned by the action handler.
-   */
-  absl::Status Run();
+  absl::Status SetDispatchStatus(absl::Status status);
+  absl::Status SetCompletionStatus(absl::Status status);
 
-  /** @brief
-   *    Specifies whether the action should delete its input nodes from its
-   *    bound node map after it's run.
-   */
-  void ClearInputsAfterRun(bool clear = true);
+  absl::Status Cancel();
+  absl::Status Await(absl::Duration timeout = absl::InfiniteDuration(),
+                     bool* absl_nullable timeout_exceeded = nullptr);
 
-  /** @brief
-   *    Specifies whether the action should delete its output nodes from its
-   *    bound node map after it's run.
-   */
-  void ClearOutputsAfterRun(bool clear = true);
+  [[nodiscard]] absl::StatusOr<ActionMessage> GetActionMessage() const
+      ABSL_LOCKS_EXCLUDED(ctx_.mu_);
+  absl::Status MapPortsFromMessage(const ActionMessage& message);
 
-  /** @brief
-   *    Cancels the action and all its inputs.
-   *
-   * This method will cancel all input nodes and notify the action handler
-   * that the action has been cancelled. It is safe to call this method multiple
-   * times, as it will only notify once.
-   *
-   * Cancelling input nodes means stopping background prefetcher fibers and
-   * setting reader status to Cancelled. Any cached data will still be available
-   * to the action handler, but no new data will be fetched.
-   *
-   * Any output nodes will not be cancelled, as they do not introduce blocking
-   * behavior in the action handler. It is the handler's responsibility to
-   * check for cancellation and stop processing if needed. However, if the
-   * handler terminates with an error, non-OK statuses will be sent to the
-   * output nodes.
-   */
-  void Cancel() const {
-    act::MutexLock lock(&mu_);
-    CancelInternal();
-  }
+  absl::StatusOr<std::unique_ptr<Action>> MakeActionInSameSession(
+      std::string_view name, std::string_view action_id = "") const;
 
-  /** @brief
-   *    Returns a thread::Case that handlers can use to synchronise with
-   *    cancellation.
-   *
-   * @return
-   *   A thread::Case that can be used to wait for cancellation in a
-   *   thread::Select() or thread::SelectUntil() call.
-   */
-  thread::Case OnCancel() const { return cancelled_->OnEvent(); }
+  AsyncNode* absl_nullable GetInput(
+      std::string_view name, std::optional<bool> bind_stream = std::nullopt);
+  AsyncNode* absl_nullable GetOutput(
+      std::string_view name, std::optional<bool> bind_stream = std::nullopt);
 
-  /** @brief
-   *    Returns whether the action has been cancelled.
-   *
-   * @return
-   *   True if the action has been cancelled, via .Cancel(), false otherwise.
-   */
-  [[nodiscard]] bool Cancelled() const;
+  absl::StatusOr<void*> GetUserData(std::string_view key) const;
+  void SetUserData(std::string_view key, std::shared_ptr<void> value);
 
-  void HintRun() {
-    act::MutexLock lock(&mu_);
-    has_been_run_ = true;
-  }
+  void SetOnCancelled(absl::AnyInvocable<void()> callback);
 
-  void BindStreamsOnInputsByDefault(bool bind) {
-    act::MutexLock lock(&mu_);
-    bind_streams_on_inputs_default_ = bind;
-  }
+  ActionSchema schema() const;
+  bool has_schema() const;
+  void set_schema(ActionSchema schema);
 
-  void BindStreamsOnOutputsByDefault(bool bind) {
-    act::MutexLock lock(&mu_);
-    bind_streams_on_outputs_default_ = bind;
-  }
+  ActionHandler handler() const;
+  bool has_handler() const;
+  void set_handler(ActionHandler handler);
 
-  void SetUserData(std::shared_ptr<void> data) {
-    act::MutexLock lock(&mu_);
-    user_data_ = std::move(data);
-  }
+  const std::string& id() const;
+  void set_id(std::string_view id);
 
-  [[nodiscard]] void* absl_nullable GetUserData() const {
-    act::MutexLock lock(&mu_);
-    return user_data_.get();
-  }
+  const absl::flat_hash_map<std::string, std::string>& headers() const;
+  std::optional<std::string> get_header(std::string_view key) const;
+  bool has_header(std::string_view key) const;
+  void set_header(std::string_view key, std::string_view value);
+  void remove_header(std::string_view key);
 
-  const absl::flat_hash_map<std::string, std::string>& headers() const {
-    return headers_;
-  }
+  const ActionBoundResources& bound_resources() const;
+  ActionBoundResources* absl_nonnull mutable_bound_resources();
 
-  absl::Status set_header(std::string_view key, std::string_view value) {
-    act::MutexLock lock(&mu_);
-    if (has_been_called_ || has_been_run_) {
-      return absl::FailedPreconditionError(
-          "Cannot modify headers after action has been called or run.");
-    }
-    headers_[key] = value;
-    return absl::OkStatus();
-  }
-
-  absl::Status remove_header(std::string_view key) {
-    act::MutexLock lock(&mu_);
-    if (has_been_called_ || has_been_run_) {
-      return absl::FailedPreconditionError(
-          "Cannot modify headers after action has been called or run.");
-    }
-    headers_.erase(key);
-    return absl::OkStatus();
-  }
-
-  std::optional<std::string_view> get_header(std::string_view key) const {
-    act::MutexLock lock(&mu_);
-    if (const auto it = headers_.find(key); it != headers_.end()) {
-      return it->second;
-    }
-    return std::nullopt;
-  }
+  const ActionSettings& settings() const;
+  ActionSettings* absl_nonnull mutable_settings();
 
  private:
-  void CancelInternal() const ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
+  static std::string GetNoChangeAfterExecWarningMessage(std::string_view field);
+  void LogWarningIfChangedAfterExec(std::string_view field) const;
+  void UnbindSessionInternal();
 
-  // Implementation detail: gets the input node ID for the given name, unique
-  // to this particular action run/call.
-  std::string GetInputId(std::string_view name) const;
-
-  // Implementation detail: gets the input node ID for the given name, unique
-  // to this particular action run/call.
-  std::string GetOutputId(std::string_view name) const;
-
-  AsyncNode* absl_nonnull GetOutputInternal(
-      std::string_view name, std::optional<bool> bind_stream = std::nullopt)
-      ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
-
-  void UnbindStreams() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
-
-  mutable act::Mutex mu_{};
-  act::CondVar cv_ ABSL_GUARDED_BY(mu_);
-
-  ActionSchema schema_;
-  absl::flat_hash_map<std::string, std::string> input_name_to_id_;
-  absl::flat_hash_map<std::string, std::string> output_name_to_id_;
-
+  std::optional<ActionSchema> schema_;
   ActionHandler handler_;
-  bool has_been_called_ ABSL_GUARDED_BY(mu_) = false;
-  bool has_been_run_ ABSL_GUARDED_BY(mu_) = false;
   std::string id_;
 
-  absl::flat_hash_map<std::string, std::shared_ptr<AsyncNode>> borrowed_inputs_
-      ABSL_GUARDED_BY(mu_);
-  absl::flat_hash_map<std::string, std::shared_ptr<AsyncNode>> borrowed_outputs_
-      ABSL_GUARDED_BY(mu_);
-
-  NodeMap* absl_nullable node_map_ ABSL_GUARDED_BY(mu_) = nullptr;
-  WireStream* absl_nullable stream_ ABSL_GUARDED_BY(mu_) = nullptr;
-  Session* absl_nullable session_ ABSL_GUARDED_BY(mu_) = nullptr;
-  ActionRegistry* absl_nullable registry_ ABSL_GUARDED_BY(mu_) = nullptr;
   absl::flat_hash_map<std::string, std::string> headers_;
 
-  absl::flat_hash_set<ChunkStoreReader*> reffed_readers_ ABSL_GUARDED_BY(mu_);
+  ActionBoundResources bound_resources_;
+  ActionSettings settings_;
 
-  bool bind_streams_on_inputs_default_ = true;
-  bool bind_streams_on_outputs_default_ = false;
-  absl::flat_hash_set<AsyncNode*> nodes_with_bound_streams_
-      ABSL_GUARDED_BY(mu_);
-
-  std::unique_ptr<thread::PermanentEvent> cancelled_;
-
-  bool clear_inputs_after_run_ ABSL_GUARDED_BY(mu_) = false;
-  bool clear_outputs_after_run_ ABSL_GUARDED_BY(mu_) = false;
-  std::optional<absl::Status> run_status_ ABSL_GUARDED_BY(mu_) = std::nullopt;
-
-  std::shared_ptr<void> user_data_ ABSL_GUARDED_BY(mu_) = nullptr;
+  ActionExecutionContext ctx_;
+  absl::flat_hash_map<std::string, std::shared_ptr<void>> user_data_;
 };
+
+inline absl::StatusOr<void*> Action::GetUserData(std::string_view key) const {
+  const auto it = user_data_.find(key);
+  if (it == user_data_.end()) {
+    return absl::NotFoundError(absl::StrCat("Key not found: ", key));
+  }
+  return it->second.get();
+}
+
+inline void Action::SetUserData(std::string_view key,
+                                std::shared_ptr<void> value) {
+  user_data_[key] = std::move(value);
+}
 
 }  // namespace act
 

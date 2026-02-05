@@ -57,7 +57,7 @@ absl::Status RunEcho(const std::shared_ptr<Action>& action) {
   // - if remove_chunks is set to true, chunks will be removed from the
   //   underlying store as they are read. Default is true.
   // ----------------------------------------------------------------------------
-  auto input_text = action->GetNode("text");
+  const auto input_text = action->GetInput("text");
   input_text->SetReaderOptions({.ordered = true, .remove_chunks = true});
 
   // ----------------------------------------------------------------------------
@@ -89,11 +89,11 @@ absl::Status RunEcho(const std::shared_ptr<Action>& action) {
 
     // Write the chunk to the output stream. In this case, we are writing
     // directly into the temporary variable for convenience.
-    action->GetNode("response") << *chunk;
+    action->GetOutput("response") << *chunk;
   }
 
   // This is necessary and indicates the end of stream.
-  action->GetNode("response") << act::EndOfStream();
+  action->GetOutput("response") << act::EndOfStream();
 
   return absl::OkStatus();
 }
@@ -135,12 +135,12 @@ absl::StatusOr<std::string> CallEcho(
     std::string_view text, Session* absl_nonnull session,
     const std::shared_ptr<WireStream>& stream) {
 
-  ASSIGN_OR_RETURN(const std::unique_ptr<Action> echo,
+  ASSIGN_OR_RETURN(const std::shared_ptr echo,
                    session->action_registry()->MakeAction(
                        /*name=*/"echo"));
-  echo->BindNodeMap(session->node_map());
-  echo->BindSession(session);
-  echo->BindStream(stream.get());
+  echo->mutable_bound_resources()->set_node_map_non_owning(session->node_map());
+  echo->mutable_bound_resources()->set_session_non_owning(session);
+  echo->mutable_bound_resources()->set_stream_non_owning(stream.get());
 
   {
     act::net::MergeWireMessagesWhileInScope merge(stream.get());

@@ -36,69 +36,189 @@
 #include "actionengine/actions/action.h"
 #include "actionengine/nodes/node_map.h"
 #include "actionengine/service/session.h"
+#include "actionengine/util/status_macros.h"
 #include "actionengine/util/utils_pybind11.h"
 
 namespace act::pybindings {
 
 namespace py = ::pybind11;
 
-ActionHandler MakeSimpleActionHandler(py::handle py_handler) {
-  py::gil_scoped_acquire gil;
-  py_handler = py_handler.inc_ref();
-
-  ActionHandler handler =
-      [py_handler](const std::shared_ptr<Action>& action) -> absl::Status {
+struct PyUserData {
+  ~PyUserData() {
     py::gil_scoped_acquire gil;
-    const py::object coro = py_handler(action);
-    ASSIGN_OR_RETURN(const py::object future,
-                     RunThreadsafeIfCoroutine(coro, GetGloballySavedEventLoop(),
-                                              /*return_future=*/true));
 
-    thread::PermanentEvent done;
-    auto future_done_callback = py::cpp_function([&done](py::handle) {
-      py::gil_scoped_acquire gil;
-      done.Notify();
-    });
-    future.attr("add_done_callback")(std::move(future_done_callback));
-
-    {
-      py::gil_scoped_release release;
-      thread::Select({done.OnEvent(), thread::OnCancel(), action->OnCancel()});
+    // no deletion unless fully run or cancelled
+    if (action->HasBeenRun()) {
+      DCHECK(future.attr("done")().cast<bool>());
     }
 
-    const bool future_done = future.attr("done")().cast<bool>();
-    const bool future_cancelled = future.attr("cancelled")().cast<bool>();
+    py::object empty1;
+    std::swap(future, empty1);
 
-    if (future_done && !future_cancelled) {
-      return absl::OkStatus();
-    }
+    py::object empty2;
+    std::swap(lock, empty2);
+  }
 
-    const bool thread_or_action_cancelled =
-        thread::Cancelled() || action->Cancelled();
-    if (thread_or_action_cancelled && !future_cancelled) {
-      auto _ = future.attr("cancel")();
-      const absl::Time deadline = !thread_or_action_cancelled
-                                      ? absl::InfiniteFuture()
-                                      : absl::Now() + absl::Seconds(10);
-      py::gil_scoped_release release;
-      thread::SelectUntil(deadline, {done.OnEvent()});
-    }
+  Action* absl_nonnull action = nullptr;
+  thread::PermanentEvent done;
+  py::object future = py::none();
+  py::object lock = py::none();
+};
 
-    if (future_cancelled && !future_done) {
-      return absl::CancelledError("Future was cancelled, but not done.");
-    }
+class PyRaiiLock {
+ public:
+  static absl::StatusOr<PyRaiiLock> FromExisting(py::handle lock) {
+    py::gil_scoped_acquire gil;
+    // if (!py::isinstance(lock, py::module::import("threading").attr("Lock"))) {
+    //   return absl::InvalidArgumentError("Expected a threading.Lock object.");
+    // }
+    return PyRaiiLock(lock);
+  }
 
-    // At this point, the future is done, but it might have failed.
-    // If it failed, this will catch and propagate the exception.
+  PyRaiiLock() {
+    py::gil_scoped_acquire gil;
+    lock_ = py::module::import("threading").attr("Lock")();
+    CHECK_OK(lock());
+  }
+
+  ~PyRaiiLock() {
+    py::gil_scoped_acquire gil;
+    unlock().IgnoreError();
+    lock_ = py::none();
+  }
+
+  absl::Status lock() const {
+    py::gil_scoped_acquire gil;
     try {
-      auto _ = future.attr("result")();
+      auto _ = lock_.attr("acquire")();
     } catch (py::error_already_set& e) {
       return absl::InternalError(absl::StrCat(e.what()));
     }
     return absl::OkStatus();
-  };
+  }
 
-  return handler;
+  absl::Status unlock() const {
+    py::gil_scoped_acquire gil;
+    try {
+      auto _ = lock_.attr("release")();
+    } catch (py::error_already_set& e) {
+      return absl::InternalError(absl::StrCat(e.what()));
+    }
+    return absl::OkStatus();
+  }
+
+ private:
+  explicit PyRaiiLock(py::handle lock_obj) {
+    py::gil_scoped_acquire gil;
+    lock_ = py::cast<py::object>(lock_obj);
+    CHECK_OK(lock());
+  }
+
+  py::object lock_;
+};
+
+static PyUserData& EnsurePyUserData(Action* absl_nonnull action) {
+  py::gil_scoped_acquire gil;
+  if (const absl::StatusOr<void*> future_ptr =
+          action->GetUserData("_py_user_data");
+      future_ptr.ok()) {
+    return *static_cast<PyUserData*>(*future_ptr);
+  }
+  auto user_data = std::make_shared<PyUserData>();
+  user_data->action = action;
+  user_data->future = GetGloballySavedEventLoop().attr("create_future")();
+  user_data->lock = py::module::import("threading").attr("Lock")();
+
+  PyUserData* user_data_ptr = user_data.get();
+  action->SetUserData("_py_user_data", std::move(user_data));
+  return *user_data_ptr;
+}
+
+absl::StatusOr<ActionHandler> MakeSimpleActionHandler(py::handle py_handler) {
+  py_handler = py_handler.inc_ref();
+
+  try {
+    const py::object inspect = py::module::import("inspect");
+    if (const bool is_coroutine_function =
+            inspect.attr("iscoroutinefunction")(py_handler).cast<bool>();
+        !is_coroutine_function) {
+      return absl::InvalidArgumentError(
+          "Handler must be a coroutine function.");
+    }
+  } catch (const py::error_already_set& e) {
+    return absl::InternalError(e.what());
+  }
+
+  return [py_handler](const std::shared_ptr<Action>& action) -> absl::Status {
+    PyUserData& user_data = EnsurePyUserData(action.get());
+    py::gil_scoped_acquire gil;
+
+    absl::Status status;
+    try {
+      absl::StatusOr<py::object> future = RunThreadsafeIfCoroutine(
+          py_handler(action), GetGloballySavedEventLoop(),
+          /*return_future=*/true);
+
+      if (!future.ok()) {
+        status = future.status();
+      } else {
+        user_data.future = *future;
+        action->SetOnCancelled([future = py::handle(user_data.future)]() {
+          py::gil_scoped_acquire gil;
+          auto _ = future.attr("cancel")();
+          // py::object our_loop = future.attr("get_loop")();
+          // our_loop.attr("call_soon_threadsafe")(py::cpp_function(
+          //     [future]() { auto _ = future.attr("cancel")(); }));
+        });
+        auto on_python_cancel =
+            py::cpp_function([user_data = &user_data](py::handle) {
+              py::gil_scoped_acquire gil;
+              auto lock = *PyRaiiLock::FromExisting(user_data->lock);
+
+              if (const bool cancelled =
+                      user_data->future.attr("cancelled")().cast<bool>();
+                  !cancelled) {
+                return;
+              }
+
+              if (user_data->action->HasBeenCancelled()) {
+                return;
+              }
+              {
+                py::gil_scoped_release release;
+                user_data->action->Cancel().IgnoreError();
+              }
+            });
+        user_data.future.attr("add_done_callback")(std::move(on_python_cancel));
+        user_data.future.attr("add_done_callback")(
+            py::cpp_function([action = action.get()](py::handle) {
+              py::gil_scoped_acquire gil;
+              if (PyUserData& user_data = EnsurePyUserData(action);
+                  !user_data.done.HasBeenNotified()) {
+                user_data.done.Notify();
+              }
+            }));
+
+        {
+          py::gil_scoped_release release;
+          thread::Select({user_data.done.OnEvent()});
+        }
+        py::object empty;
+        std::swap(*future, empty);
+      }
+    } catch (py::error_already_set& e) {
+      status = absl::InternalError(absl::StrCat(e.what()));
+    }
+
+    RETURN_IF_ERROR(status);
+
+    try {
+      auto _ = user_data.future.attr("result")();
+      return absl::OkStatus();
+    } catch (py::error_already_set& e) {
+      return absl::InternalError(absl::StrCat(e.what()));
+    }
+  };
 }
 
 void BindActionSchema(py::handle scope, std::string_view name) {
@@ -135,9 +255,11 @@ void BindActionRegistry(py::handle scope, std::string_view name) {
       .def(
           "register",
           [](const std::shared_ptr<ActionRegistry>& self, std::string_view name,
-             const ActionSchema& def, py::function handler) {
-            return self->Register(name, def,
-                                  MakeSimpleActionHandler(std::move(handler)));
+             const ActionSchema& def, py::function handler) -> absl::Status {
+            ASSIGN_OR_RETURN(ActionHandler cpp_handler,
+                             MakeSimpleActionHandler(handler));
+            self->Register(name, def, std::move(cpp_handler));
+            return absl::OkStatus();
           },
           py::arg("name"), py::arg("definition"), py::arg("handler"))
       .def(
@@ -156,9 +278,10 @@ void BindActionRegistry(py::handle scope, std::string_view name) {
              Session* session) -> absl::StatusOr<std::shared_ptr<Action>> {
             ASSIGN_OR_RETURN(std::unique_ptr<Action> action,
                              self->MakeAction(name, id));
-            action->BindNodeMap(node_map);
-            action->BindStream(stream.get());
-            action->BindSession(session);
+            action->mutable_bound_resources()->set_node_map_non_owning(
+                node_map);
+            action->mutable_bound_resources()->set_stream(stream);
+            action->mutable_bound_resources()->set_session_non_owning(session);
             return std::shared_ptr(std::move(action));
           },
           py::arg("name"), py::arg_v("action_id", ""),
@@ -195,15 +318,23 @@ void BindAction(py::handle scope, std::string_view name) {
   auto cls =
       py::classh<Action>(scope, std::string(name).c_str(),
                          py::release_gil_before_calling_cpp_dtor())
-          .def(MakeSameObjectRefConstructor<Action>(), py::keep_alive<0, 1>())
+          .def(py::init(
+                   [](const std::shared_ptr<Action>& other) { return other; }),
+               py::keep_alive<0, 1>())
           .def(py::init([](ActionSchema schema, std::string_view id = "") {
-            return std::make_shared<Action>(std::move(schema), id);
+            auto action = std::make_shared<Action>(id);
+            action->set_schema(std::move(schema));
+            return action;
           }));
   cls.def(
          "run",
-         [](const std::shared_ptr<Action>& action)
-             -> absl::StatusOr<std::shared_ptr<Action>> {
-           RETURN_IF_ERROR(action->Run());
+         [](const std::shared_ptr<Action>& action,
+            double timeout = -1.0) -> absl::StatusOr<std::shared_ptr<Action>> {
+           absl::Duration timeout_duration = absl::InfiniteDuration();
+           if (timeout >= 0.0) {
+             timeout_duration = absl::Seconds(timeout);
+           }
+           RETURN_IF_ERROR(action->Run(timeout_duration));
            return action;
          },
          pybindings::keep_event_loop_memo(),
@@ -212,7 +343,7 @@ void BindAction(py::handle scope, std::string_view name) {
           "run_in_background",
           [](const std::shared_ptr<Action>& action)
               -> absl::StatusOr<std::shared_ptr<Action>> {
-            thread::Detach({}, [action]() { action->Run().IgnoreError(); });
+            RETURN_IF_ERROR(action->RunInBackground());
             return action;
           },
           pybindings::keep_event_loop_memo(),
@@ -243,6 +374,7 @@ void BindAction(py::handle scope, std::string_view name) {
           "call_and_wait_for_dispatch_status",
           [](const std::shared_ptr<Action>& action,
              py::handle headers_obj) -> absl::StatusOr<absl::Status> {
+            return absl::UnimplementedError("not implemented.");
             absl::flat_hash_map<std::string, std::string> headers;
             if (!headers_obj.is_none()) {
               try {
@@ -259,8 +391,8 @@ void BindAction(py::handle scope, std::string_view name) {
             absl::StatusOr<absl::Status> dispatch_status_or;
             {
               py::gil_scoped_release release;
-              dispatch_status_or =
-                  action->CallAndWaitForDispatchStatus(std::move(headers));
+              // dispatch_status_or =
+              //     action->CallAndWaitForDispatchStatus(std::move(headers));
             }
             if (!dispatch_status_or.ok()) {
               return dispatch_status_or.status();
@@ -275,22 +407,24 @@ void BindAction(py::handle scope, std::string_view name) {
       .def(
           "clear_inputs_after_run",
           [](const std::shared_ptr<Action>& self, bool clear) {
-            self->ClearInputsAfterRun(clear);
+            self->mutable_settings()->clear_inputs_after_run = clear;
           },
           py::arg_v("clear", true))
       .def(
           "clear_outputs_after_run",
           [](const std::shared_ptr<Action>& self, bool clear) {
-            self->ClearOutputsAfterRun(clear);
+            self->mutable_settings()->clear_outputs_after_run = clear;
           },
           py::arg_v("clear", true))
-      .def("_hint_run",
-           [](const std::shared_ptr<Action>& self) { self->HintRun(); })
       .def(
           "cancel",
-          [](const std::shared_ptr<Action>& self) { return self->Cancel(); },
+          [](const std::shared_ptr<Action>& self) {
+            const PyUserData& user_data = EnsurePyUserData(self.get());
+            auto _ = user_data.future.attr("cancel")();
+            return self->Cancel();
+          },
           py::call_guard<py::gil_scoped_release>())
-      .def("cancelled", &Action::Cancelled,
+      .def("cancelled", &Action::HasBeenCancelled,
            py::call_guard<py::gil_scoped_release>())
       .def(
           "get_action_message",
@@ -301,26 +435,26 @@ void BindAction(py::handle scope, std::string_view name) {
           py::call_guard<py::gil_scoped_release>())
       .def("get_registry",
            [](const std::shared_ptr<Action>& action) {
-             return ShareWithNoDeleter(action->GetRegistry());
+             return action->bound_resources().borrow_registry();
            })
       .def("get_session",
            [](const std::shared_ptr<Action>& action) {
-             return ShareWithNoDeleter(action->GetSession());
+             return action->bound_resources().borrow_session();
            })
       .def("get_node_map",
            [](const std::shared_ptr<Action>& action) {
-             return ShareWithNoDeleter(action->GetNodeMap());
+             return action->bound_resources().borrow_node_map();
            })
       .def("get_stream",
            [](const std::shared_ptr<Action>& action) {
-             return ShareWithNoDeleter(action->GetStream());
+             return action->bound_resources().borrow_stream();
            })
-      .def("get_id", &Action::GetId)
-      .def("get_schema", &Action::GetSchema, py::return_value_policy::reference)
+      .def("get_id", &Action::id)
+      .def("get_schema", &Action::schema, py::return_value_policy::reference)
       .def(
           "get_node",
           [](const std::shared_ptr<Action>& action, std::string_view id) {
-            return ShareWithNoDeleter(action->GetNode(id));
+            return ShareWithNoDeleter<AsyncNode>(nullptr);
           },
           py::arg("node_id"), py::call_guard<py::gil_scoped_release>())
       .def(
@@ -349,27 +483,31 @@ void BindAction(py::handle scope, std::string_view name) {
           py::call_guard<py::gil_scoped_release>())
       .def(
           "bind_handler",
-          [](const std::shared_ptr<Action>& self, py::function handler) {
-            return self->BindHandler(
-                MakeSimpleActionHandler(std::move(handler)));
+          [](const std::shared_ptr<Action>& self,
+             py::function handler) -> absl::Status {
+            ASSIGN_OR_RETURN(auto cpp_handler,
+                             MakeSimpleActionHandler(std::move(handler)));
+            self->set_handler(std::move(cpp_handler));
+            return absl::OkStatus();
           },
           py::arg("handler"))
       .def(
           "bind_streams_on_inputs_by_default",
           [](const std::shared_ptr<Action>& self, bool bind) {
-            self->BindStreamsOnInputsByDefault(bind);
+            self->mutable_settings()->bind_streams_on_inputs_by_default = bind;
           },
           py::arg("bind"))
       .def(
           "bind_streams_on_outputs_by_default",
           [](const std::shared_ptr<Action>& self, bool bind) {
-            self->BindStreamsOnOutputsByDefault(bind);
+            self->mutable_settings()->bind_streams_on_outputs_by_default = bind;
           },
           py::arg("bind"))
       .def(
           "bind_node_map",
-          [](const std::shared_ptr<Action>& self, NodeMap* node_map) {
-            self->BindNodeMap(node_map);
+          [](const std::shared_ptr<Action>& self,
+             std::shared_ptr<NodeMap> node_map) {
+            self->mutable_bound_resources()->set_node_map(std::move(node_map));
           },
           py::arg("node_map"))
       .def("headers",
@@ -381,8 +519,7 @@ void BindAction(py::handle scope, std::string_view name) {
           "get_header",
           [](const std::shared_ptr<Action>& self, std::string_view key,
              bool decode = false) -> std::optional<py::object> {
-            const std::optional<std::string_view> header =
-                self->get_header(key);
+            const std::optional<std::string> header = self->get_header(key);
             if (!header) {
               return std::nullopt;
             }
@@ -421,7 +558,8 @@ void BindAction(py::handle scope, std::string_view name) {
             }
             value = std::string(py_value_bytes);
 
-            return self->set_header(key, value);
+            self->set_header(key, value);
+            return absl::OkStatus();
           },
           py::arg("key"), py::arg("value"))
       .def(

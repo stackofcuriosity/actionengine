@@ -291,7 +291,6 @@ class Action(_C.actions.Action):
     def run(self) -> "Action":
         """Runs the action."""
         # _C.save_first_encountered_event_loop()
-        self._hint_run()
         super().run_in_background()
         return self
 
@@ -303,6 +302,3 @@ class Action(_C.actions.Action):
         """Binds a NodeMap to the action."""
         super().bind_node_map(node_map)
         self._node_map = node_map
-
-    def __del__(self):
-        self.cancel()

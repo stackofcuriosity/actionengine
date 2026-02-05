@@ -50,12 +50,11 @@ Service::Service(ActionRegistry* absl_nullable action_registry,
 Service::~Service() {
   act::MutexLock lock(&mu_);
   allow_new_connections_ = false;
+  DLOG(INFO) << "Shutting down service.";
 
   for (auto& [_, session] : sessions_) {
     session->CancelAllActions();
   }
-  sessions_.clear();
-
   const std::vector<std::unique_ptr<thread::Fiber>> fibers =
       GatherConnectionFibers();
   for (const auto& fiber : fibers) {
@@ -79,6 +78,14 @@ Service::~Service() {
       stream->Abort(absl::DeadlineExceededError("Service shutting down."));
     }
   }
+
+  for (const auto& fiber : fibers) {
+    mu_.unlock();
+    fiber->Join();
+    mu_.lock();
+  }
+
+  sessions_.clear();
 }
 
 WireStream* absl_nullable Service::GetStream(std::string_view stream_id) const {
@@ -184,18 +191,20 @@ StreamHandler Service::EnsureCleanupOnDone(StreamHandler handler) {
     auto status = internal::EnsureHalfClosesOrAbortsStream(handler)(
         stream, session, recv_timeout);
 
-    act::MutexLock lock(&mu_);
     const std::string stream_id = stream->GetId();
 
     const std::unique_ptr<internal::ConnectionCtx> ctx =
         session->ExtractStreamHandler(stream_id);
-    std::unique_ptr<thread::Fiber> handler_fiber = ctx->ExtractHandlerFiber();
-    if (handler_fiber != nullptr) {
-      // handler_fiber should just be the current fiber
-      DCHECK(handler_fiber.get() == thread::Fiber::Current());
-      thread::Detach(std::move(handler_fiber));
+    if (ctx != nullptr) {
+      std::unique_ptr<thread::Fiber> handler_fiber = ctx->ExtractHandlerFiber();
+      if (handler_fiber != nullptr) {
+        // handler_fiber should just be the current fiber
+        DCHECK(handler_fiber.get() == thread::Fiber::Current());
+        thread::Detach(std::move(handler_fiber));
+      }
     }
 
+    act::MutexLock lock(&mu_);
     if (session->GetNumActiveConnections() == 0) {
       auto node_map_it = node_maps_.find(stream_to_session_.at(stream_id));
       DCHECK(node_map_it != node_maps_.end());

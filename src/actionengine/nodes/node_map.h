@@ -75,7 +75,7 @@ class NodeMap {
   void FlushAllWriters() {
     act::MutexLock lock(&mu_);
     for (auto& [_, node] : nodes_) {
-      node->GetWriter().WaitForBufferToDrain();
+      node->GetWriter().FlushCurrentBuffer();
     }
   }
 

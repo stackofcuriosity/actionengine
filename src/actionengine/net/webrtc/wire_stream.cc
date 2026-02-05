@@ -431,9 +431,11 @@ WebRtcWireStream::~WebRtcWireStream() {
   if (!closed_) {
     LOG(WARNING) << "WebRtcWireStream destructor timed out waiting for close.";
   }
+  mu_.unlock();
   try {
     connection_->close();
   } catch (const std::exception&) {}
+  mu_.lock();
 }
 
 absl::Status WebRtcWireStream::AttachBufferingBehaviour(
@@ -582,10 +584,10 @@ absl::StatusOr<std::optional<WireMessage>> WebRtcWireStream::Receive(
 
   for (const auto& fragment : message.node_fragments) {
     if (fragment.id == "__abort__") {
-      closed_ = true;
       if (!std::holds_alternative<Chunk>(fragment.data)) {
         status_ = absl::InternalError(
             "Received abort fragment with invalid data type. Aborting anyway.");
+        CloseOnError(status_);
         return status_;
       }
       absl::StatusOr<absl::Status> abort_status_or =
@@ -595,6 +597,7 @@ absl::StatusOr<std::optional<WireMessage>> WebRtcWireStream::Receive(
       } else {
         status_ = *abort_status_or;
       }
+      CloseOnError(status_);
       return status_;
     }
   }
@@ -672,14 +675,17 @@ absl::Status WebRtcWireStream::HalfCloseInternal() {
 void WebRtcWireStream::CloseOnError(absl::Status status)
     ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
   LOG(ERROR) << "WebRtcWireStream error: " << status.message();
+  half_closed_ = true;
 
   if (!closed_) {
+    closed_ = true;
     status_.Update(std::move(status));
     recv_channel_.writer()->Close();
+    mu_.unlock();
+    data_channel_->close();
+    mu_.lock();
   }
 
-  half_closed_ = true;
-  closed_ = true;
   cv_.SignalAll();
 }
 

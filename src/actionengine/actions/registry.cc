@@ -31,6 +31,7 @@
 #include "actionengine/actions/action.h"
 #include "actionengine/data/types.h"
 #include "actionengine/util/map_util.h"
+#include "actionengine/util/random.h"
 #include "actionengine/util/status_macros.h"
 
 namespace act {
@@ -98,16 +99,16 @@ absl::StatusOr<ActionMessage> ActionRegistry::MakeActionMessage(
 }
 
 absl::StatusOr<std::unique_ptr<Action>> ActionRegistry::MakeAction(
-    std::string_view name, std::string_view action_id, std::vector<Port> inputs,
-    std::vector<Port> outputs) {
+    std::string_view name, std::string_view action_id) {
 
   ASSIGN_OR_RETURN(const ActionSchema& schema, GetSchema(name));
   ASSIGN_OR_RETURN(const ActionHandler& handler, GetHandler(name));
 
-  auto action = std::make_unique<Action>(schema, action_id, std::move(inputs),
-                                         std::move(outputs));
-  action->BindHandler(handler);
-  action->BindRegistry(this);
+  auto action = std::make_unique<Action>(!action_id.empty() ? action_id
+                                                             : GenerateUUID4());
+  action->set_handler(handler);
+  action->set_schema(schema);
+  action->mutable_bound_resources()->set_registry_non_owning(this);
 
   return action;
 }

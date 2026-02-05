@@ -140,6 +140,7 @@ absl::Status ChunkStoreWriter::RunWriteLoop() {
                                *std::move(chunk_or_status),
                                /*final=*/
                                !next_fragment->continued);
+    cv_.SignalAll();
 
     if (!status.ok()) {
       break;
@@ -155,6 +156,9 @@ absl::Status ChunkStoreWriter::RunWriteLoop() {
   }
   accepts_puts_ = false;
   status.Update(chunk_store_->CloseWritesWithStatus(status));
+
+  std::optional<NodeFragment> ignore_to_empty_buffer;
+  while (buffer_.reader()->Read(&ignore_to_empty_buffer)) {}
 
   cv_.SignalAll();
   return status;
@@ -190,13 +194,11 @@ absl::StatusOr<int> ChunkStoreWriter::Put(Chunk value, int seq, bool final)
   }
 
   EnsureWriteLoop();
-  mu_.unlock();
   const bool success = buffer_.writer()->WriteUnlessCancelled(NodeFragment{
       .data = std::move(value),
       .seq = written_seq,
       .continued = !final,
   });
-  mu_.lock();
 
   if (!success) {
     accepts_puts_ = false;

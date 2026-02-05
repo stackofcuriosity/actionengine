@@ -304,8 +304,6 @@ absl::StatusOr<std::unique_ptr<Redis>> Redis::Connect(std::string_view host,
     return redis->status_;
   }
 
-  DLOG(INFO) << "Connected to Redis server at " << host << ":" << port << ".";
-
   return redis;
 }
 
@@ -316,7 +314,6 @@ Redis::~Redis() {
     return;
   }
 
-  DLOG(INFO) << "~Redis: Disconnecting from Redis server.";
   std::vector<std::string> channels;
   channels.reserve(subscriptions_.size());
   for (const auto& [channel, subscription] : subscriptions_) {
@@ -330,11 +327,11 @@ Redis::~Redis() {
   }
 
   ExecuteCommandWithGuards("UNSUBSCRIBE", channels_args).IgnoreError();
-  if (connected_) {
-    mu_.unlock();
-    redisAsyncDisconnect(context_.get());
-    mu_.lock();
-  }
+  // if (connected_) {
+  //   mu_.unlock();
+  //   redisAsyncDisconnect(context_.get());
+  //   mu_.lock();
+  // }
 
   while (num_pending_commands_ > 0 && connected_ && status_.ok()) {
     cv_.Wait(&mu_);

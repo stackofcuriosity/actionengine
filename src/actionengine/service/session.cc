@@ -26,12 +26,15 @@
 #include <absl/log/check.h>
 #include <absl/log/log.h>
 #include <absl/status/statusor.h>
+#include <absl/strings/match.h>
 #include <absl/strings/str_cat.h>
 #include <absl/strings/str_format.h>
+#include <absl/strings/strip.h>
 #include <absl/time/clock.h>
 
 #include "actionengine/actions/action.h"
 #include "actionengine/concurrency/concurrency.h"
+#include "actionengine/data/conversion.h"
 #include "actionengine/data/types.h"
 #include "actionengine/net/stream.h"
 #include "actionengine/nodes/async_node.h"
@@ -39,183 +42,6 @@
 #include "actionengine/stores/chunk_store.h"
 
 namespace act {
-
-ActionContext::~ActionContext() {
-  act::MutexLock lock(&mu_);
-
-  CancelContextInternal();
-  WaitForActionsToDetachInternal();
-
-  if (!running_actions_.empty()) {
-    LOG(ERROR) << absl::StrFormat(
-        "ActionContext::~ActionContext() timed out waiting for %v actions to "
-        "detach. Please make sure that all actions react to cancellation and "
-        "detach themselves from the context.",
-        running_actions_.size());
-  }
-
-  // In debug builds, make it a fatal error if there are still running actions.
-  DCHECK(running_actions_.empty());
-}
-
-absl::Status ActionContext::Dispatch(std::shared_ptr<Action> action) {
-  act::MutexLock l(&mu_);
-  if (cancelled_) {
-    return absl::CancelledError("Action context is cancelled.");
-  }
-
-  if (running_actions_.contains(action.get())) {
-    return absl::FailedPreconditionError(
-        "Action is already running in this context.");
-  }
-
-  std::string action_id = action->GetId();
-  if (actions_by_id_.contains(action_id)) {
-    return absl::FailedPreconditionError(
-        absl::StrCat("An action with ID ", action->GetId(),
-                     " is already running in this context."));
-  }
-
-  Action* absl_nonnull action_ptr = action.get();
-  running_actions_[action_ptr] =
-      thread::NewTree({}, [action = std::move(action), this]() mutable {
-        act::MutexLock lock(&mu_);
-
-        mu_.unlock();
-        if (const auto run_status = action->Run(); !run_status.ok()) {
-          LOG(ERROR) << "Failed to run action: " << run_status;
-        }
-        mu_.lock();
-
-        thread::Detach(ExtractActionFiber(action.get()));
-        actions_by_id_.erase(action->GetId());
-        cv_.SignalAll();
-      });
-  actions_by_id_[action_id] = action_ptr;
-
-  return absl::OkStatus();
-}
-
-std::vector<std::shared_ptr<Action>> ActionContext::ListRunningActions() const {
-  act::MutexLock lock(&mu_);
-  std::vector<std::shared_ptr<Action>> actions;
-  actions.reserve(running_actions_.size());
-  for (const auto& [action_ptr, _] : running_actions_) {
-    actions.push_back(action_ptr->shared_from_this());
-  }
-  return actions;
-}
-
-void ActionContext::CancelAction(Action* action) {
-  act::MutexLock lock(&mu_);
-  CancelActionInternal(action);
-}
-
-void ActionContext::CancelActionInternal(Action* absl_nonnull action)
-    ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
-  if (action == nullptr) {
-    return;
-  }
-
-  const auto it = running_actions_.find(action);
-  const auto id_it = actions_by_id_.find(action->GetId());
-
-  if (it == running_actions_.end() && id_it != actions_by_id_.end()) {
-    DLOG(FATAL) << absl::StrFormat(
-        "Inconsistent state: action with ID %v found in actions_by_id_ but not "
-        "in running_actions_.",
-        action->GetId());
-    ABSL_ASSUME(false);
-  }
-
-  if (id_it == actions_by_id_.end() && it != running_actions_.end()) {
-    DLOG(FATAL) << absl::StrFormat(
-        "Inconsistent state: action with ID %v found in running_actions_ but "
-        "not in actions_by_id_.",
-        action->GetId());
-    ABSL_ASSUME(false);
-  }
-
-  action->Cancel();
-  it->second->Cancel();
-}
-
-absl::Status ActionContext::CancelAction(const std::string_view action_id) {
-  act::MutexLock lock(&mu_);
-  const auto id_it = actions_by_id_.find(std::string(action_id));
-  if (id_it == actions_by_id_.end()) {
-    return absl::NotFoundError(
-        absl::StrFormat("No action with ID %v found in context.", action_id));
-  }
-  CancelActionInternal(id_it->second);
-  return absl::OkStatus();
-}
-
-void ActionContext::CancelContext() {
-  act::MutexLock lock(&mu_);
-  CancelContextInternal();
-}
-
-void ActionContext::WaitForActionsToDetach(absl::Duration cancel_timeout,
-                                           absl::Duration detach_timeout) {
-  act::MutexLock lock(&mu_);
-  WaitForActionsToDetachInternal(cancel_timeout, detach_timeout);
-}
-
-void ActionContext::CancelContextInternal() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
-  if (cancelled_) {
-    return;
-  }
-  for (auto& [action, action_fiber] : running_actions_) {
-    action->Cancel();
-    action_fiber->Cancel();
-  }
-  cancelled_ = true;
-  if (!running_actions_.empty()) {
-    DLOG(INFO) << absl::StrFormat(
-        "Action context cancelled, actions pending: %v.",
-        running_actions_.size());
-  }
-}
-
-std::unique_ptr<thread::Fiber> ActionContext::ExtractActionFiber(
-    Action* action) {
-  const auto map_node = running_actions_.extract(action);
-  CHECK(!map_node.empty())
-      << "Running action not found in session it was created in.";
-  return std::move(map_node.mapped());
-}
-
-void ActionContext::WaitForActionsToDetachInternal(
-    absl::Duration cancel_timeout, absl::Duration detach_timeout) {
-  const absl::Time now = absl::Now();
-  const absl::Time fiber_cancel_by = now + cancel_timeout;
-  const absl::Time expect_actions_to_detach_by = now + detach_timeout;
-
-  if (running_actions_.empty()) {
-    return;
-  }
-
-  while (!running_actions_.empty()) {
-    if (cv_.WaitWithDeadline(&mu_, fiber_cancel_by)) {
-      break;
-    }
-  }
-  if (running_actions_.empty()) {
-    DLOG(INFO) << "All actions have detached cooperatively.";
-  }
-
-  CancelContextInternal();
-  DLOG(INFO) << "Some actions are still running: sent cancellations and "
-                "waiting for them to detach.";
-
-  while (!running_actions_.empty()) {
-    if (cv_.WaitWithDeadline(&mu_, expect_actions_to_detach_by)) {
-      DLOG(ERROR) << "Timed out waiting for actions to detach.";
-      break;
-    }
-  }
-}
 
 internal::ConnectionCtx::ConnectionCtx(Session* session,
                                        std::shared_ptr<WireStream> stream,
@@ -359,13 +185,57 @@ static absl::Status ReturnDispatchStatusReportingToCallerStream(
 Session::~Session() {
   act::MutexLock lock(&mu_);
 
+  finalizing_ = true;
+
   // First, gracefully cancel all actions: they might still want to write
   // to nodes.
-  action_context_.CancelContext();
-  action_context_.WaitForActionsToDetach();
+  std::vector<std::shared_ptr<Action>> actions;
+  actions.reserve(actions_.size());
+  for (auto& [_, action] : actions_) {
+    actions.push_back(action);
+  }
+  mu_.unlock();
+  for (const auto& action : actions) {
+    if (absl::Status cancel_status = action->Cancel(); !cancel_status.ok()) {
+      LOG(WARNING) << "Failed to cancel action " << action->id() << ": "
+                   << cancel_status;
+    }
+  }
+  mu_.lock();
+  thread::CaseArray done_cases;
+  done_cases.reserve(actions.size());
+  for (const auto& action : actions) {
+    absl::StatusOr<thread::Case> done_case_or_status = action->OnDone();
+    if (!done_case_or_status.ok()) {
+      continue;
+    }
+    done_cases.push_back(*std::move(done_case_or_status));
+  }
+  size_t num_actions_done = 0;
+  const absl::Time deadline = absl::Now() + absl::Seconds(10);
+  while (absl::Now() < deadline && num_actions_done < actions.size()) {
+    mu_.unlock();
+    const int selected = thread::SelectUntil(deadline, done_cases);
+    mu_.lock();
+    if (selected == -1 && num_actions_done >= done_cases.size()) {
+      break;
+    }
+    done_cases[selected] = thread::NonSelectableCase();
+    ++num_actions_done;
+  }
+  if (absl::Now() >= deadline) {
+    LOG(WARNING) << "Timed out waiting for "
+                 << actions.size() - num_actions_done << " actions to finish.";
+  }
 
-  // // Flush writers as our actions might have put data that has not yet
-  // // been replicated to the streams.
+  mu_.unlock();
+  for (const auto& action : actions) {
+    action->UnbindSessionInternal();
+  }
+  actions_.clear();
+  actions.clear();
+  mu_.lock();
+  // // Flush writers
   // if (node_map_ != nullptr) {
   //   node_map_->FlushAllWriters();
   // }
@@ -373,13 +243,14 @@ Session::~Session() {
   for (auto& [_, connection] : connections_) {
     connection->CancelHandler();
   }
-  for (auto& [_, connection] : connections_) {
-    // release the lock because connection handlers may use action
-    // registry, node map, etc.
-    mu_.unlock();
-    connection->Join().IgnoreError();
-    mu_.lock();
-  }
+  // for (auto& [connection_id, connection] : connections_) {
+  //   // release the lock because connection handlers may use action
+  //   // registry, node map, etc.
+  //   mu_.unlock();
+  //   connection->Join().IgnoreError();
+  //   mu_.lock();
+  //   DLOG(INFO) << "connection joined in ~Session: " << connection_id;
+  // }
 }
 
 void Session::StartStreamHandler(std::string_view id,
@@ -430,6 +301,45 @@ absl::Status Session::DispatchWireMessage(WireMessage message,
   return DispatchWireMessageInternal(std::move(message), origin_stream);
 }
 
+void Session::CancelAllActions() {
+  act::MutexLock lock(&mu_);
+  for (auto& [_, action] : actions_) {
+    action->Cancel().IgnoreError();
+  }
+}
+
+absl::Status Session::RecordActionCall(std::string_view id,
+                                       std::shared_ptr<Action> action) {
+  act::MutexLock lock(&mu_);
+  if (actions_.contains(id)) {
+    return absl::AlreadyExistsError(absl::StrCat(
+        "Action with id ", id, " already exists in this session."));
+  }
+  actions_.emplace(id, std::move(action));
+  return absl::OkStatus();
+}
+
+absl::StatusOr<std::shared_ptr<Action>> Session::ExtractAction(
+    std::string_view id) {
+  act::MutexLock lock(&mu_);
+  return ExtractAction_(id);
+}
+
+absl::StatusOr<std::shared_ptr<Action>> Session::ExtractAction_(
+    std::string_view id) ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+  if (finalizing_) {
+    return absl::FailedPreconditionError(
+        "Session is being finalized, actions are being purged, so reentrant "
+        "access is not allowed.");
+  }
+  const auto action_it = actions_.extract(id);
+  if (action_it.empty()) {
+    return absl::NotFoundError(
+        absl::StrCat("Action with id ", id, " not found."));
+  }
+  return std::move(action_it.mapped());
+}
+
 size_t Session::GetNumActiveConnections() const {
   act::MutexLock lock(&mu_);
   return connections_.size();
@@ -471,12 +381,51 @@ void Session::set_action_registry(
   action_registry_ = std::move(action_registry);
 }
 
-absl::Status Session::DispatchNodeFragmentInternal(
-    NodeFragment node_fragment) const {
+absl::Status Session::DispatchNodeFragmentInternal(NodeFragment node_fragment) {
   if (!node_map_) {
     return absl::FailedPreconditionError("Node map not set.");
   }
-  return node_map_->Get(node_fragment.id)->Put(std::move(node_fragment));
+
+  if (finalizing_) {
+    return absl::FailedPreconditionError(
+        "Session is being finalized, no more dispatch.");
+  }
+
+  RETURN_IF_ERROR(node_map_->Get(node_fragment.id)->Put(node_fragment));
+
+  if (absl::EndsWith(node_fragment.id, "#__dispatch_status__")) {
+    const std::string_view action_id =
+        absl::StripSuffix(node_fragment.id, "#__dispatch_status__");
+    const auto action_it = actions_.find(action_id);
+    if (action_it == actions_.end()) {
+      return absl::NotFoundError(absl::StrCat(
+          "Received dispatch status for unknown action ", action_id));
+    }
+    ASSIGN_OR_RETURN(Chunk & chunk, node_fragment.GetChunk());
+    ASSIGN_OR_RETURN(const auto action_status, ConvertTo<absl::Status>(chunk));
+    RETURN_IF_ERROR(action_it->second->SetDispatchStatus(action_status));
+    if (!action_status.ok()) {
+      ExtractAction_(action_id).IgnoreError();
+    }
+  }
+
+  if (absl::EndsWith(node_fragment.id, "#__status__")) {
+    const std::string_view action_id =
+        absl::StripSuffix(node_fragment.id, "#__status__");
+    const auto action_it = actions_.find(action_id);
+    if (action_it == actions_.end()) {
+      return absl::NotFoundError(
+          absl::StrCat("Received status for unknown action ", action_id));
+    }
+    ASSIGN_OR_RETURN(Chunk & chunk, node_fragment.GetChunk());
+    ASSIGN_OR_RETURN(const auto action_status, ConvertTo<absl::Status>(chunk));
+    RETURN_IF_ERROR(action_it->second->SetCompletionStatus(action_status));
+    if (!action_status.ok()) {
+      ExtractAction_(action_id).IgnoreError();
+    }
+  }
+
+  return absl::OkStatus();
 }
 
 absl::Status Session::DispatchReservedActionInternal(
@@ -487,10 +436,21 @@ absl::Status Session::DispatchReservedActionInternal(
 
 absl::Status Session::DispatchActionMessageInternal(
     ActionMessage action_message, WireStream* origin_stream) {
+  if (finalizing_) {
+    return absl::FailedPreconditionError(
+        "Session is being finalized, no more dispatch.");
+  }
   if (IsReservedActionName(action_message.name)) {
     // Reserved actions might use custom logic dealing with dispatch statuses,
     // thus raw return:
     return DispatchReservedActionInternal(std::move(action_message));
+  }
+  if (actions_.contains(action_message.id)) {
+    return ReturnDispatchStatusReportingToCallerStream(
+        origin_stream, action_message.id,
+        absl::AlreadyExistsError(
+            absl::StrCat("Action with id ", action_message.id,
+                         " already exists in this session.")));
   }
 
   if (!action_registry_) {
@@ -507,31 +467,44 @@ absl::Status Session::DispatchActionMessageInternal(
   }
 
   absl::StatusOr<std::unique_ptr<Action>> action_or_status =
-      action_registry_->MakeAction(action_message.name, action_message.id,
-                                   std::move(action_message.inputs),
-                                   std::move(action_message.outputs));
+      action_registry_->MakeAction(action_message.name, action_message.id);
   if (!action_or_status.ok()) {
     return ReturnDispatchStatusReportingToCallerStream(
         origin_stream, action_message.id, action_or_status.status());
   }
 
   std::unique_ptr<Action> action = *std::move(action_or_status);
-  action->BindNodeMap(&*node_map_);
-  action->BindSession(this);
-  action->BindStream(origin_stream);
+  action->mutable_bound_resources()->set_node_map_non_owning(node_map_);
+  action->mutable_bound_resources()->set_session_non_owning(this);
+  action->mutable_bound_resources()->set_stream_non_owning(origin_stream);
 
   // The session class is intended to represent a session where there is
   // another party involved. In this case, we want to clear inputs and outputs
   // after the action is run, because they will already have been sent to the
   // other party, and we don't want to keep them around locally.
-  action->ClearInputsAfterRun(true);
-  action->ClearOutputsAfterRun(true);
+  action->mutable_settings()->clear_inputs_after_run = true;
+  action->mutable_settings()->clear_outputs_after_run = true;
 
-  return action_context_.Dispatch(std::move(action));
+  auto [it, inserted] = actions_.insert({action->id(), std::move(action)});
+  DCHECK(inserted);
+  const absl::Status run_in_background_status =
+      it->second->RunInBackground(/*detach=*/true);
+  if (!run_in_background_status.ok()) {
+    actions_.erase(it);
+    return ReturnDispatchStatusReportingToCallerStream(
+        origin_stream, action_message.id, run_in_background_status);
+  }
+
+  return ReturnDispatchStatusReportingToCallerStream(
+      origin_stream, action_message.id, absl::OkStatus());
 }
 
 absl::Status Session::DispatchWireMessageInternal(WireMessage message,
                                                   WireStream* origin_stream) {
+  if (finalizing_) {
+    return absl::FailedPreconditionError(
+        "Session is being finalized, no more dispatch.");
+  }
 
   std::vector<std::string> error_messages;
 

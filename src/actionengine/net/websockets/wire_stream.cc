@@ -38,9 +38,7 @@ namespace act::net {
 WebsocketWireStream::WebsocketWireStream(
     std::unique_ptr<BoostWebsocketStream> stream, std::string_view id)
     : stream_(std::make_unique<FiberAwareWebsocketStream>(std::move(stream))),
-      id_(id.empty() ? GenerateUUID4() : std::string(id)) {
-  DLOG(INFO) << absl::StrFormat("WESt %s created", id_);
-}
+      id_(id.empty() ? GenerateUUID4() : std::string(id)) {}
 
 WebsocketWireStream::WebsocketWireStream(
     std::unique_ptr<FiberAwareWebsocketStream> stream, std::string_view id)
@@ -64,7 +62,6 @@ absl::Status WebsocketWireStream::Send(WireMessage message) {
 
 WebsocketWireStream::~WebsocketWireStream() {
   act::MutexLock lock(&mu_);
-  LOG(INFO) << absl::StrFormat("WESt %p destruction started", this);
   if (!half_closed_) {
     if (!closed_) {
       LOG(ERROR)
@@ -109,7 +106,6 @@ absl::StatusOr<std::optional<WireMessage>> WebsocketWireStream::Receive(
   if (!unpacked.ok()) {
     return unpacked.status();
   }
-  LOG(INFO) << absl::StrFormat("WESt %p Receive(): %v", this, *unpacked);
 
   if (unpacked->actions.empty() && unpacked->node_fragments.empty()) {
     if (half_closed_) {
@@ -148,7 +144,6 @@ absl::Status WebsocketWireStream::Start() {
 }
 
 absl::Status WebsocketWireStream::Accept() {
-  DLOG(INFO) << absl::StrFormat("WESt %s Accept()", id_);
   return stream_->Accept();
 }
 
@@ -188,13 +183,9 @@ void WebsocketWireStream::AbortInternal(absl::Status status)
 }
 
 absl::Status WebsocketWireStream::SendInternal(WireMessage message) {
-  LOG(INFO) << absl::StrFormat("WESt %p SendInternal(): %v", this, message);
   mu_.unlock();
   auto status = stream_->Write(cppack::Pack(std::move(message)));
   mu_.lock();
-
-  LOG(INFO) << absl::StrFormat("WESt %p SendInternal() status %v", this,
-                               status);
 
   return status;
 }
