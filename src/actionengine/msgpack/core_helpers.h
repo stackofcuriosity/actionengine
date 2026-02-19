@@ -1,4 +1,4 @@
-// Copyright 2025 Google LLC
+// Copyright 2026 The Action Engine Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -210,9 +210,8 @@ absl::Status Serialize(T&& value, const InsertInfo& insert) {
 
 template <typename T>
 concept HasDefinedGetExtent = requires(T t) {
-  {
-    EgltMsgpackGetExtent(std::declval<LookupPointer>(), std::declval<T*>())
-  } -> std::same_as<absl::StatusOr<uint32_t>>;
+  {EgltMsgpackGetExtent(std::declval<LookupPointer>(), std::declval<T*>())}
+      ->std::same_as<absl::StatusOr<uint32_t>>;
 };
 
 template <typename T>

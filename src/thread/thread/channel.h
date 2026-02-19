@@ -1,4 +1,4 @@
-// Copyright 2025 Google LLC
+// Copyright 2026 The Action Engine Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -478,7 +478,7 @@ bool ReadSelectable<T>::Handle(CaseInSelectClause* absl_nonnull reader,
       channel->waiters_.UnlockAndReleaseReader(reader);
 
       // Potentially admit a waiting writer.
-      if (CaseInSelectClause * absl_nonnull unblocked_writer;
+      if (CaseInSelectClause* absl_nonnull unblocked_writer;
           channel->waiters_.GetWaitingWriter(&unblocked_writer)) {
         auto* absl_nonnull item = unblocked_writer->GetCase()->GetArgPtr<T>(0);
         auto copy_or_move =
@@ -497,7 +497,7 @@ bool ReadSelectable<T>::Handle(CaseInSelectClause* absl_nonnull reader,
   }
 
   // Try to transfer directly from waiting writer to reader
-  if (CaseInSelectClause * absl_nonnull writer;
+  if (CaseInSelectClause* absl_nonnull writer;
       channel->waiters_.GetMatchingWriter(reader, &writer)) {
     auto* absl_nonnull item = writer->GetCase()->GetArgPtr<T>(0);
     auto copy_or_move = *writer->GetCase()->GetArgPtr<CopyOrMove>(1);
@@ -554,7 +554,7 @@ bool WriteSelectable<T>::Handle(CaseInSelectClause* absl_nonnull writer,
   CHECK(!channel->closed_) << "Calling Write() on closed channel";
 
   // First try to transfer directly from writer to a waiting reader
-  if (CaseInSelectClause * absl_nonnull reader;
+  if (CaseInSelectClause* absl_nonnull reader;
       channel->waiters_.GetMatchingReader(writer, &reader)) {
     auto* absl_nonnull writer_item = writer->GetCase()->GetArgPtr<T>(0);
     auto copy_or_move = *writer->GetCase()->GetArgPtr<CopyOrMove>(1);

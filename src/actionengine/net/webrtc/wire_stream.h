@@ -1,4 +1,4 @@
-// Copyright 2025 Google LLC
+// Copyright 2026 The Action Engine Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -26,7 +26,6 @@
 #include <absl/base/nullability.h>
 #include <absl/base/thread_annotations.h>
 #include <absl/container/flat_hash_map.h>
-#include <absl/hash/hash.h>
 #include <absl/status/status.h>
 #include <absl/status/statusor.h>
 #include <absl/time/time.h>

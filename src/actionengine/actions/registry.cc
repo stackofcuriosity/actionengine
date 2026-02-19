@@ -1,4 +1,4 @@
-// Copyright 2025 Google LLC
+// Copyright 2026 The Action Engine Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -105,7 +105,7 @@ absl::StatusOr<std::unique_ptr<Action>> ActionRegistry::MakeAction(
   ASSIGN_OR_RETURN(const ActionHandler& handler, GetHandler(name));
 
   auto action = std::make_unique<Action>(!action_id.empty() ? action_id
-                                                             : GenerateUUID4());
+                                                            : GenerateUUID4());
   action->set_handler(handler);
   action->set_schema(schema);
   action->mutable_bound_resources()->set_registry_non_owning(this);

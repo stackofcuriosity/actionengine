@@ -1,4 +1,4 @@
-// Copyright 2025 Google LLC
+// Copyright 2026 The Action Engine Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -79,7 +79,7 @@ class Selectable;
  */
 struct [[nodiscard]] Case {
   internal::Selectable* absl_nonnull selectable;
-  absl::InlinedVector<void * absl_nullable, 2> arguments;
+  absl::InlinedVector<void* absl_nullable, 2> arguments;
 
   Case(internal::Selectable* absl_nullable s = nullptr) : selectable(s) {}
 
