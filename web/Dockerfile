@@ -24,7 +24,7 @@ RUN echo '\nexport NVM_DIR="$HOME/.nvm"\n[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR
 WORKDIR /opt
 
 # 1) Checkout the repo
-RUN git clone https://github.com/google-deepmind/actionengine /opt/actionengine
+RUN git clone https://github.com/stackofcuriosity/actionengine /opt/actionengine
 
 COPY js/src /opt/actionengine/js/src
 COPY web/app /opt/actionengine/web/app

@@ -2,19 +2,19 @@
 name = "action-engine"
 version = "0.4.1"
 
-authors = [{ name = "Helena Pankov", email = "helenapankov@google.com" }]
-description = "Action Engine"
+authors = [{ name = "Helena Pankov", email = "helenapankov@actionengine.dev" }]
+description = "API and UI SDK for sleek applications with agentic, generative, streaming capabilities"
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 
 dependencies = [
-  "absl-py>=2.2.2",
-  "numpy>=2,<2.3.0",
-  "ormsgpack",
-  "Pillow",
-  "pydantic",
-  "pybind11>=2.13.6",
+    "absl-py>=2.2.2",
+    "numpy>=2,<2.3.0",
+    "ormsgpack",
+    "Pillow",
+    "pydantic",
+    "pybind11>=2.13.6",
 ]
 
 [project.scripts]
@@ -22,17 +22,17 @@ actionengine = "actionengine.cli.main:sync_main"
 
 [build-system]
 requires = [
-  "wheel",
-  "build",
-  "cmake==3.31.6",
-  #    "ninja",
-  "setuptools",
-  "ormsgpack",
-  "numpy>=2,<2.3.0",
-  #    "pybind11>=2.13.6",
-  "pybind11-stubgen>=2.5.5",
-  "Pillow",
-  "pydantic",
+    "wheel",
+    "build",
+    "cmake==3.31.6",
+    #    "ninja",
+    "setuptools",
+    "ormsgpack",
+    "numpy>=2,<2.3.0",
+    #    "pybind11>=2.13.6",
+    "pybind11-stubgen>=2.5.5",
+    "Pillow",
+    "pydantic",
 ]
 build-backend = "build_py"
 backend-path = ["./"]

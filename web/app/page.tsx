@@ -87,60 +87,74 @@ const CopyCommand = ({ command }) => {
 const GoogleBlobs = () => {
   const router = useRouter()
 
-  const xShift = 0.65
+  const blobs = [
+    {
+      color: '#4285F4',
+      onClick: () => {
+        router.push('/bidi-blobs')
+      },
+    },
+    {
+      color: '#EA4335',
+      onClick: () => {
+        router.push('/gemini?q=ollama')
+      },
+    },
+    {
+      color: '#FBBC04',
+      onClick: () => {
+        router.push('/blob')
+      },
+    },
+    {
+      color: '#4285F4',
+      onClick: () => {
+        router.push('/deepresearch?q=alpha-demos')
+      },
+    },
+    {
+      color: '#34A853',
+      onClick: () => {
+        router.push(
+          'https://github.com/stackofcuriosity/actionengine/tree/main/examples/003-python-speech-to-text',
+        )
+      },
+    },
+    {
+      color: '#EA4335',
+      onClick: () => {
+        router.push('/bidi-blobs')
+      },
+    },
+  ]
+
+  const radius = 0.6
 
   return (
     <group scale={1.5}>
-      <Blob
-        scale={0.33}
-        position={[xShift - 1.7, 0, 0]}
-        color='#4285F4'
-        onClick={() => {
-          router.push('/bidi-blobs')
-        }}
-      />
-      <Blob
-        scale={0.25}
-        position={[xShift - 1.08, -0.07, 0]}
-        color='#EA4335'
-        onClick={() => {
-          router.push('/gemini?q=ollama')
-        }}
-      />
-      <Blob
-        scale={0.25}
-        position={[xShift - 0.55, -0.07, 0]}
-        color='#FBBC04'
-        onClick={() => {
-          router.push('/blob')
-        }}
-      />
-      <Blob
-        scale={[0.23, 0.3, 0.25]}
-        position={[xShift - 0.03, -0.12, 0]}
-        color='#4285F4'
-        onClick={() => {
-          router.push('/deepresearch?q=alpha-demos')
-        }}
-      />
-      <Blob
-        scale={[0.15, 0.3, 0.25]}
-        position={[xShift + 0.41, -0.03, 0]}
-        color='#34A853'
-        onClick={() => {
-          router.push(
-            'https://github.com/google-deepmind/actionengine/tree/main/examples/003-python-speech-to-text',
-          )
-        }}
-      />
-      <Blob
-        scale={0.25}
-        position={[xShift + 0.88, -0.07, 0]}
-        color='#EA4335'
-        onClick={() => {
-          router.push('/bidi-blobs')
-        }}
-      />
+      {blobs.map((blob, index) => {
+        // Creatively chaotic: randomized offsets from a base layout
+        const baseAngle = (index / blobs.length) * Math.PI * 2
+        const angleOffset = (Math.random() - 0.5) * 0.5
+        const radiusOffset = (Math.random() - 0.5) * 0.4
+        const chaoticRadius = radius + radiusOffset
+
+        const x = Math.cos(baseAngle + angleOffset) * chaoticRadius
+        const y = Math.sin(baseAngle + angleOffset) * chaoticRadius
+        const z = (Math.random() - 0.5) * 0.5
+
+        const scale = 0.2 + Math.random() * 0.1
+
+        return (
+          <Blob
+            key={index}
+            scale={scale}
+            position={[x, y, z]}
+            color={blob.color}
+            onClick={blob.onClick}
+          />
+        )
+      })}
     </group>
   )
 }
@@ -189,7 +203,7 @@ export default function Page() {
             A toolkit for building multimodal, streaming APIs and UIs
           </p>
           <iframe
-            src='https://ghbtns.com/github-btn.html?user=google-deepmind&repo=actionengine&type=star&count=true'
+            src='https://ghbtns.com/github-btn.html?user=stackofcuriosity&repo=actionengine&type=star'
             frameBorder='0'
             scrolling='0'
             width='170'
@@ -204,14 +218,14 @@ export default function Page() {
             , browser client behavior in{' '}
             <Link
               className='text-blue-600'
-              href='https://github.com/google-deepmind/actionengine/tree/main/web'
+              href='https://github.com/stackofcuriosity/actionengine/tree/main/web'
             >
               <u>TypeScript</u>
             </Link>
             , simple starter project in{' '}
             <Link
               className='text-blue-600'
-              href='https://github.com/google-deepmind/actionengine/tree/main/examples/000-actions'
+              href='https://github.com/stackofcuriosity/actionengine/tree/main/examples/000-actions'
             >
               <u>C++</u>
             </Link>
@@ -252,7 +266,7 @@ export default function Page() {
                   </h3>
                   <p>ensure you have a modern clang installed, and then run:</p>
                   <div className='mb-2 mt-2'>
-                    <CopyCommand command='pip install git+https://github.com/google-deepmind/actionengine' />
+                    <CopyCommand command='pip install git+https://github.com/stackofcuriosity/actionengine' />
                   </div>
                 </div>
               </div>
@@ -280,17 +294,17 @@ export default function Page() {
             >
               Show me code examples!
             </h3>
-{/*            <HighlightedCode*/}
-{/*              language='python'*/}
-{/*              className='w-full mb-6'*/}
-{/*              starryNightInstance={starryNightInstance}*/}
-{/*            >*/}
-{/*              {`*/}
-{/*import actionengine*/}
-{/*actionengine.to_chunk("Hello, world!")*/}
-{/*a = True*/}
-{/*`}*/}
-{/*            </HighlightedCode>*/}
+            {/*            <HighlightedCode*/}
+            {/*              language='python'*/}
+            {/*              className='w-full mb-6'*/}
+            {/*              starryNightInstance={starryNightInstance}*/}
+            {/*            >*/}
+            {/*              {`*/}
+            {/*import actionengine*/}
+            {/*actionengine.to_chunk("Hello, world!")*/}
+            {/*a = True*/}
+            {/*`}*/}
+            {/*            </HighlightedCode>*/}
           </div>
         </div>
         <div className='flex flex-row w-full items-start flex-wrap'>
@@ -328,14 +342,14 @@ export default function Page() {
                       {' '}
                       integrate with{' '}
                       <Link
-                        href='https://github.com/google-deepmind/actionengine/blob/main/examples/007-python-generative-media/actions/gemini.py'
+                        href='https://github.com/stackofcuriosity/actionengine/blob/main/examples/007-python-generative-media/actions/gemini.py'
                         className='text-blue-600'
                       >
                         <u>LLMs</u>
                       </Link>{' '}
                       and{' '}
                       <Link
-                        href='https://github.com/google-deepmind/actionengine/blob/main/examples/007-python-generative-media/actions/text_to_image.py'
+                        href='https://github.com/stackofcuriosity/actionengine/blob/main/examples/007-python-generative-media/actions/text_to_image.py'
                         className='text-blue-600'
                       >
                         <u>other AI models</u>
@@ -346,14 +360,14 @@ export default function Page() {
                       {' '}
                       build{' '}
                       <Link
-                        href='https://github.com/google-deepmind/actionengine/blob/main/examples/010-service/service.py'
+                        href='https://github.com/stackofcuriosity/actionengine/blob/main/examples/010-service/service.py'
                         className='text-blue-600'
                       >
                         <u>web services</u>
                       </Link>
                       , integrating with FastAPI,{' '}
                       <Link
-                        href='https://github.com/google-deepmind/actionengine/blob/main/examples/007-python-generative-media/actions/text_to_image.py#L14-L129'
+                        href='https://github.com/stackofcuriosity/actionengine/blob/main/examples/007-python-generative-media/actions/text_to_image.py#L14-L129'
                         className='text-blue-600'
                       >
                         <u>Pydantic</u>
@@ -363,14 +377,14 @@ export default function Page() {
                     <li>
                       create{' '}
                       <Link
-                        href='https://github.com/google-deepmind/actionengine/blob/main/examples/007-python-generative-media/actions/deep_research/deep_research.py'
+                        href='https://github.com/stackofcuriosity/actionengine/blob/main/examples/007-python-generative-media/actions/deep_research/deep_research.py'
                         className='text-blue-600'
                       >
                         <u>agentic applications</u>
                       </Link>{' '}
                       that{' '}
                       <Link
-                        href='https://github.com/google-deepmind/actionengine/tree/main/examples/003-python-speech-to-text'
+                        href='https://github.com/stackofcuriosity/actionengine/tree/main/examples/003-python-speech-to-text'
                         className='text-blue-600'
                       >
                         <u>process media</u>,
@@ -379,14 +393,14 @@ export default function Page() {
                     <li>
                       connect peers flexibly through{' '}
                       <Link
-                        href='https://github.com/google-deepmind/actionengine/blob/main/examples/003-python-speech-to-text/run_client.py#L27-L30'
+                        href='https://github.com/stackofcuriosity/actionengine/blob/main/examples/003-python-speech-to-text/run_client.py#L27-L30'
                         className='text-blue-600'
                       >
                         <u>WebSocket</u>
                       </Link>
                       {', '}
                       <Link
-                        href='https://github.com/google-deepmind/actionengine/blob/main/examples/007-python-generative-media/server.py#L73-L98'
+                        href='https://github.com/stackofcuriosity/actionengine/blob/main/examples/007-python-generative-media/server.py#L73-L98'
                         className='text-blue-600'
                       >
                         <u>WebRTC</u>
@@ -423,7 +437,7 @@ export default function Page() {
                     <ul content='space' className='list-disc pl-5 mb-2'>
                       <li>
                         <Link
-                          href='https://github.com/google-deepmind/actionengine/blob/main/web/app/echo/page.tsx'
+                          href='https://github.com/stackofcuriosity/actionengine/blob/main/web/app/echo/page.tsx'
                           className='text-blue-600'
                         >
                           <u>communicate</u>
@@ -433,7 +447,7 @@ export default function Page() {
                       <li>
                         orchestrate{' '}
                         <Link
-                          href='https://github.com/google-deepmind/actionengine/blob/main/web/app/bidi-blobs/page.tsx'
+                          href='https://github.com/stackofcuriosity/actionengine/blob/main/web/app/bidi-blobs/page.tsx'
                           className='text-blue-600'
                         >
                           <u>client-side actions</u>
@@ -443,7 +457,7 @@ export default function Page() {
                       <li>
                         seamlessly handle streams of{' '}
                         <Link
-                          href='https://github.com/google-deepmind/actionengine/blob/main/web/src/components/canvas/Genmedia.tsx'
+                          href='https://github.com/stackofcuriosity/actionengine/blob/main/web/src/components/canvas/Genmedia.tsx'
                           className='text-blue-600'
                         >
                           <u>multimodal data</u>
@@ -491,7 +505,7 @@ export default function Page() {
               </Link>{' '}
               generation demo with live progress updates, and{' '}
               <Link
-                href='https://github.com/google-deepmind/actionengine/blob/main/examples/007-python-generative-media/actions/text_to_image.py'
+                href='https://github.com/stackofcuriosity/actionengine/blob/main/examples/007-python-generative-media/actions/text_to_image.py'
                 className='text-blue-600'
               >
                 <u>see the code</u>
@@ -542,7 +556,7 @@ export default function Page() {
               &nbsp;seeing its thought process as a separate stream, retrieve
               history later with a session token, and{' '}
               <Link
-                href='https://github.com/google-deepmind/actionengine/blob/main/examples/007-python-generative-media/actions/gemini.py'
+                href='https://github.com/stackofcuriosity/actionengine/blob/main/examples/007-python-generative-media/actions/gemini.py'
                 className='text-blue-600'
               >
                 <u>see the code</u>
@@ -570,7 +584,7 @@ export default function Page() {
               by making a plan, running web searches in multiple investigative
               actions, and compiling a final report, and{' '}
               <Link
-                href='https://github.com/google-deepmind/actionengine/blob/main/examples/007-python-generative-media/actions/deep_research/deep_research.py'
+                href='https://github.com/stackofcuriosity/actionengine/blob/main/examples/007-python-generative-media/actions/deep_research/deep_research.py'
                 className='text-blue-600'
               >
                 <u>see the code</u>
@@ -622,7 +636,7 @@ export default function Page() {
               </Link>{' '}
               and color them on your command, and{' '}
               <Link
-                href='https://github.com/google-deepmind/actionengine/blob/main/examples/007-python-generative-media/actions/gemini_fc.py'
+                href='https://github.com/stackofcuriosity/actionengine/blob/main/examples/007-python-generative-media/actions/gemini_fc.py'
                 className='text-blue-600'
               >
                 <u>see the code</u>
@@ -645,7 +659,7 @@ export default function Page() {
             </h2>
             <p className='mb-2 text-gray-600 leading-[1.5]'>
               Check out{' '}
-              <Link href='https://github.com/google-deepmind/actionengine/tree/main/examples/003-python-speech-to-text'>
+              <Link href='https://github.com/stackofcuriosity/actionengine/tree/main/examples/003-python-speech-to-text'>
                 <u>speech to text</u>
               </Link>{' '}
               with RealtimeSTT,{' '}
@@ -658,21 +672,21 @@ export default function Page() {
               or take a look at{' '}
               <Link
                 className='text-blue-600'
-                href='https://github.com/google-deepmind/actionengine/tree/main/web'
+                href='https://github.com/stackofcuriosity/actionengine/tree/main/web'
               >
                 <u>these very pages in React</u>
               </Link>
               , a{' '}
               <Link
                 className='text-blue-600'
-                href='https://github.com/google-deepmind/actionengine/tree/main/examples/010-service'
+                href='https://github.com/stackofcuriosity/actionengine/tree/main/examples/010-service'
               >
                 <u>Python project that integrates Action Engine with FastAPI</u>
               </Link>{' '}
               or{' '}
               <Link
                 className='text-blue-600'
-                href='https://github.com/google-deepmind/actionengine/tree/main/examples/000-actions'
+                href='https://github.com/stackofcuriosity/actionengine/tree/main/examples/000-actions'
               >
                 <u>a starter C++ project</u>
               </Link>
@@ -765,12 +779,11 @@ export default function Page() {
               abstractions, which you might not need.
             </p>
             <p className='mb-2 text-gray-600'>
-              We, early supporters at Google and DeepMind, want a flexible,
-              quick-feedback way to navigate the fast-evolving landscape of AI
-              infrastructure. Current frameworks solidified around abstractions
-              that are growing increasingly inadequate for the new demands of
-              multimodal, streaming, stateful, long-running, agentic
-              applications.
+              We, early adopters, want a flexible, quick-feedback way to
+              navigate the fast-evolving landscape of AI infrastructure. Current
+              frameworks solidified around abstractions that are growing
+              increasingly inadequate for the new demands of multimodal,
+              streaming, stateful, long-running, agentic applications.
             </p>
             <p className='mb-6 text-gray-600 font-semibold'>
               Action Engine aims to be a common building block for these new
@@ -846,7 +859,7 @@ export default function Page() {
               </Link>
               ,{' '}
               <Link
-                href='https://github.com/google-deepmind/actionengine/blob/main/examples/007-python-generative-media/server.py'
+                href='https://github.com/stackofcuriosity/actionengine/blob/main/examples/007-python-generative-media/server.py'
                 className='text-blue-600'
               >
                 <u>servers</u>
@@ -864,13 +877,14 @@ export default function Page() {
             >
               <u>Apache 2.0 License</u>
             </Link>{' '}
-            and released by Google DeepMind. The source code is hosted on GitHub
-            at{' '}
+            initially released by Google DeepMind, and now maintained by the
+            original authors without that affiliation. The source code is hosted
+            on GitHub at{' '}
             <Link
               className='text-blue-600'
-              href='https://github.com/google-deepmind/actionengine'
+              href='https://github.com/stackofcuriosity/actionengine'
             >
-              <u>google-deepmind/actionengine</u>
+              <u>stackofcuriosity/actionengine</u>
             </Link>
             . Static non-code assets are provided under the{' '}
             <Link
@@ -880,17 +894,6 @@ export default function Page() {
               <u>Creative Commons Attribution 4.0 International License</u>
             </Link>
             .
-          </p>
-          <p className='mb-4 text-gray-500 text-sm'>
-            This page, demos, and any other resources or services provided at
-            actionengine.dev are provided “as is” by individual maintainers, not
-            by or on behalf of Google or its affiliates, and without warranty of
-            any kind.
-          </p>
-          <p className='mb-4 text-gray-500 text-sm'>
-            Unless explicitly stated otherwise, Google and Google DeepMind do
-            not endorse or support any third party services, products, or
-            applications mentioned, demonstrated, or linked to from this page.
           </p>
         </div>
       </div>

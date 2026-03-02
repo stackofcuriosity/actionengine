@@ -29,11 +29,7 @@ const iterateResponse = async (
   node: AsyncNode,
   receiveMessage?: (msg: ChatMessage) => void,
 ) => {
-  node.setReaderOptions(
-    /* ordered */ true,
-    /* removeChunks */ true,
-    /* timeout */ -1,
-  )
+  node.setReaderOptions({ ordered: true, removeChunks: true, timeout: -1 })
   const chunks: string[] = []
   for await (const chunk of node) {
     chunks.push(textDecoder.decode(chunk.data))

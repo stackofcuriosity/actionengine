@@ -24,11 +24,7 @@ export const rehydrateMessages = async (
   node: AsyncNode,
   setMessages: MessageSetter,
 ) => {
-  node.setReaderOptions(
-    /* ordered */ true,
-    /* removeChunks */ true,
-    /* timeout */ -1,
-  )
+  node.setReaderOptions({ ordered: true, removeChunks: true, timeout: -1 })
   let idx = 0
   const textDecoder = new TextDecoder('utf-8')
   for await (const chunk of node) {
@@ -45,11 +41,7 @@ export const rehydrateThoughts = async (
   node: AsyncNode,
   setThoughts: MessageSetter,
 ) => {
-  node.setReaderOptions(
-    /* ordered */ true,
-    /* removeChunks */ true,
-    /* timeout */ -1,
-  )
+  node.setReaderOptions({ ordered: true, removeChunks: true, timeout: -1 })
   const textDecoder = new TextDecoder('utf-8')
   let idx = 0
   for await (const chunk of node) {
@@ -71,11 +63,7 @@ export const setChatMessagesFromAsyncNode = async (
   node: AsyncNode,
   setMessages: MessageSetter,
 ) => {
-  node.setReaderOptions(
-    /* ordered */ true,
-    /* removeChunks */ true,
-    /* timeout */ -1,
-  )
+  node.setReaderOptions({ ordered: true, removeChunks: true, timeout: -1 })
   const textDecoder = new TextDecoder('utf-8')
   let first = true
   let idx = -1

@@ -34,11 +34,7 @@ import {
 } from '@/helpers/demoChats'
 
 const setSessionTokenFromAction = async (node: AsyncNode, setSessionToken) => {
-  node.setReaderOptions(
-    /* ordered */ true,
-    /* removeChunks */ true,
-    /* timeout */ -1,
-  )
+  node.setReaderOptions({ ordered: true, removeChunks: true, timeout: -1 })
   for await (const chunk of node) {
     const sessionToken = new TextDecoder('utf-8').decode(chunk.data)
     setSessionToken(sessionToken)

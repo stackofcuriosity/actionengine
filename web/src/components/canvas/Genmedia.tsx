@@ -146,6 +146,7 @@ const useBlobControls = () => {
           step: 1,
           disabled: true,
           label: 'Progress',
+          render: () => false,
         },
         createPrompt: {
           label: 'Create Prompt',
@@ -167,11 +168,12 @@ const useBlobControls = () => {
 
             const outputNode = action.getOutput('output')
             const iterateOutput = async () => {
-              outputNode.setReaderOptions(
-                /* ordered */ true,
-                /* removeChunks */ true,
-                /* timeout */ -1,
-              )
+              outputNode.setReaderOptions({
+                ordered: true,
+                removeChunks: true,
+                nChunksToBuffer: -1,
+                timeout: -1,
+              })
               const textDecoder = new TextDecoder('utf-8')
               let first = true
               for await (const chunk of outputNode) {
@@ -194,75 +196,87 @@ const useBlobControls = () => {
         generate: {
           label: 'Generate',
           onClick: async () => {
-            const action = makeAction('text_to_image', actionEngine)
-            await action.call()
-
-            await action.getInput('request').putAndFinalize({
-              metadata: { mimetype: '__BaseModel__' },
-              data: encodeBaseModelMessage(
-                'actions.text_to_image.DiffusionRequest',
-                makeDiffusionRequest({ prompt: get('prompt') }),
-              ),
-            })
-
-            const selectedEntity = world.queryFirst(IsSelected)
-            if (!selectedEntity) {
+            const selectedEntities = world.query(IsSelected)
+            if (selectedEntities.length === 0) {
               console.warn('No entity selected to update texture')
               return
             }
 
-            selectedEntity.set(TextureUrl, { url: kDefaultTextureUrl })
+            selectedEntities.forEach((entity, index) => {
+              if (!entity || typeof entity.set !== 'function') return
+              entity.set(TextureUrl, { url: kDefaultTextureUrl })
+              entity.set(Progress, { progress: 0 })
+            })
 
-            const fetchImage = async () => {
+            const fetchImage = async (entity: any, seed: number) => {
+              const action = makeAction('text_to_image', actionEngine)
+              await action.call()
+
+              await action.getInput('request').putAndFinalize({
+                metadata: { mimetype: '__BaseModel__' },
+                data: encodeBaseModelMessage(
+                  'actions.text_to_image.DiffusionRequest',
+                  makeDiffusionRequest({ prompt: get('prompt'), seed }),
+                ),
+              })
+
               const imageNode = action.getOutput('image')
-              imageNode.setReaderOptions(
-                /* ordered */ true,
-                /* removeChunks */ true,
-                /* timeout */ -1,
-              )
+              imageNode.setReaderOptions({
+                ordered: false,
+                removeChunks: true,
+                nChunksToBuffer: -1,
+                timeout: -1,
+              })
+
+              const fetchProgress = async () => {
+                const progressNode = action.getOutput('progress')
+                progressNode.setReaderOptions({
+                  ordered: false,
+                  removeChunks: true,
+                  nChunksToBuffer: -1,
+                  timeout: -1,
+                })
+
+                let progress = 0
+
+                try {
+                  for await (const chunk of progressNode) {
+                    progress += 1
+                    if (progress >= kInferenceSteps) {
+                      return
+                    }
+                    // set({ progress }, false)
+                    entity.set(Progress, { progress })
+                  }
+                } catch (error) {
+                  console.error('Error fetching progress:', error)
+                }
+              }
+
+              fetchProgress().then()
 
               try {
                 for await (let chunk of imageNode) {
+                  console.log('Chunk received:', chunk)
                   const url = URL.createObjectURL(makeBlobFromChunk(chunk))
-                  if (!selectedEntity.has(TextureUrl)) {
+                  if (!entity.has(TextureUrl)) {
                     return
                   }
-                  selectedEntity.set(TextureUrl, { url })
-                  set({ progress: kInferenceSteps }, false)
-                  selectedEntity.set(Progress, { progress: kInferenceSteps })
+                  entity.set(TextureUrl, { url })
+                  // set({ progress: kInferenceSteps }, false)
+                  entity.set(Progress, { progress: kInferenceSteps })
                 }
               } catch (error) {
                 console.error('Error fetching image:', error)
               }
             }
-            fetchImage().then()
 
-            const fetchProgress = async () => {
-              const progressNode = action.getOutput('progress')
-              progressNode.setReaderOptions(
-                /* ordered */ true,
-                /* removeChunks */ true,
-                /* timeout */ -1,
+            selectedEntities.forEach((entity, index) => {
+              fetchImage(entity, Math.floor(Math.random() * 1000000)).catch(
+                (error) => {
+                  console.error('Error in generating image:', error)
+                },
               )
-
-              let progress = 0
-
-              try {
-                for await (const chunk of progressNode) {
-                  progress += 1
-                  if (progress >= kInferenceSteps) {
-                    return
-                  }
-                  set({ progress }, false)
-                  selectedEntity.set(Progress, { progress })
-                }
-              } catch (error) {
-                console.error('Error fetching progress:', error)
-              }
-            }
-
-            Promise.all([fetchImage(), fetchProgress()]).catch((error) => {
-              console.error('Error in generating image:', error)
             })
           },
           type: SpecialInputs.BUTTON,
@@ -298,6 +312,8 @@ export const GenmediaExample = () => {
   }, [world])
 
   const [actionEngine] = useContext(ActionEngineContext)
+  const [controls, setControl, getControl] = useBlobControls()
+
   useEffect(() => {
     if (!actionEngine || !actionEngine.actionRegistry) {
       return
@@ -308,51 +324,65 @@ export const GenmediaExample = () => {
 
   const meshRef = useRef<THREE.Mesh>(new THREE.Mesh())
 
-  const [imageEntity, setImageEntity] = useState(null)
+  const [imageEntities, setImageEntities] = useState([])
 
   useEffect(() => {
     if (!world) {
       return
     }
-    setImageEntity(world.spawn())
+    const entities = [
+      world.spawn(Mesh, Position, Scale, IsSelected, TextureUrl, Progress),
+      world.spawn(Mesh, Position, Scale, IsSelected, TextureUrl, Progress),
+      world.spawn(Mesh, Position, Scale, IsSelected, TextureUrl, Progress),
+      world.spawn(Mesh, Position, Scale, IsSelected, TextureUrl, Progress),
+    ]
+
+    entities.forEach((entity, index) => {
+      const xOffset = (index % 2) - 0.5
+      const yOffset = -(Math.floor(index / 2) - 0.5)
+      const scale = 0.9
+      entity.set(Position, {
+        x: xOffset,
+        y: yOffset,
+        z: 0,
+      })
+      entity.set(Scale, { x: scale, y: scale, z: 1 })
+      entity.set(TextureUrl, { url: kDefaultTextureUrl })
+      entity.set(Progress, { progress: 0 })
+    })
+
+    setImageEntities(entities)
+    return () => {
+      entities.forEach((entity) => entity && entity.destroy && entity.destroy())
+    }
   }, [world])
 
   useEffect(() => {
-    if (!imageEntity) {
+    if (imageEntities.length === 0 || !controls.position) {
       return
     }
-    imageEntity.add(Mesh)
-    imageEntity.set(Mesh, meshRef.current)
-    imageEntity.add(Position)
-    imageEntity.set(Position, { x: -0.5, y: 0.5, z: 0 })
-    imageEntity.add(Scale)
-    imageEntity.set(Scale, { x: 1, y: 1, z: 1 })
-    imageEntity.add(IsSelected)
-    imageEntity.add(TextureUrl)
-    imageEntity.set(TextureUrl, {
-      url: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mOMdtrxHwAEqwJW7xjHFQAAAABJRU5ErkJggg==',
+    imageEntities.forEach((entity, index) => {
+      if (!entity || typeof entity.set !== 'function') return
+      const xOffset = (index % 2) - 0.5
+      const yOffset = -(Math.floor(index / 2) - 0.5)
+      entity.set(Position, {
+        x: controls.position.x + xOffset,
+        y: -controls.position.y + yOffset,
+        z: 0,
+      })
     })
-    imageEntity.add(Progress)
-    imageEntity.set(Progress, { progress: 0 })
+  }, [controls.position, imageEntities])
 
-    return () => {
-      imageEntity.destroy()
-      setImageEntity(world.spawn())
-    }
-  }, [world, imageEntity])
+  const [orbit, setOrbit] = useState(true)
 
   const [hovered, hover] = useState(false)
   useCursor(hovered, 'none', 'auto')
 
-  // const cursorEntity = useQueryFirst(GlobalCursor)
-  // useTraitEffect(cursorEntity, Position, (position) => {
-  //   if (!position) {
-  //     return
-  //   }
-  // })
-
   const canvasRef = useRef<DrawingCanvasController>(null)
   useEffect(() => {
+    if (!world || !canvasRef.current) return
+    canvasRef.current.entity.set(Position, { x: -0.5, y: -0.5, z: 0 })
+
     return () => {
       if (canvasRef.current) {
         canvasRef.current.entity.destroy()
@@ -360,9 +390,6 @@ export const GenmediaExample = () => {
       }
     }
   }, [world])
-  canvasRef.current?.entity.set(Position, { x: -0.5, y: -0.5, z: 0 })
-
-  const [controls, setControl, getControl] = useBlobControls()
 
   const generatePromptCallback = useCallback(async () => {
     if (
@@ -389,11 +416,11 @@ export const GenmediaExample = () => {
 
     const outputNode = action.getOutput('output')
     const iterateOutput = async () => {
-      outputNode.setReaderOptions(
-        /* ordered */ true,
-        /* removeChunks */ true,
-        /* timeout */ -1,
-      )
+      outputNode.setReaderOptions({
+        ordered: true,
+        removeChunks: true,
+        timeout: -1,
+      })
       const textDecoder = new TextDecoder('utf-8')
       let first = true
       for await (const chunk of outputNode) {
@@ -430,27 +457,6 @@ export const GenmediaExample = () => {
     }
   }, [actionEngine])
 
-  useEffect(() => {
-    if (imageEntity == null || !controls.position) {
-      return
-    }
-    const mesh = imageEntity.get(Mesh)
-    mesh.position.x = controls.position.x
-    mesh.position.y = -controls.position.y
-  }, [controls.position, imageEntity])
-
-  const [textureUrl, setTextureUrl] = useState(kDefaultTextureUrl)
-  const textureUrlFromTrait =
-    useTrait(imageEntity, TextureUrl)?.url || kDefaultTextureUrl
-  useEffect(() => {
-    setTextureUrl(textureUrlFromTrait)
-  }, [textureUrlFromTrait])
-
-  const texture = useTexture(textureUrl)
-
-  const progress = useTrait(imageEntity, Progress)?.progress || 0
-
-  const [orbit, setOrbit] = useState(true)
   useTraitEffect(world, GlobalUIState, (uiState) => {
     if (!uiState) {
       return
@@ -462,18 +468,59 @@ export const GenmediaExample = () => {
     <>
       <group>
         {orbit && <OrbitControls />}
-        <mesh ref={meshRef} scale={[2, 2, 2]}>
-          <shapeGeometry args={[getRoundedPlaneShape(1, 1, 0.05)]} />
-          <meshBasicMaterial
-            color='#ffffff'
-            side={THREE.DoubleSide}
-            map={texture}
-            wireframe={progress > 0 && textureUrl == kDefaultTextureUrl}
-          />
-        </mesh>
+        {imageEntities.map((entity, index) => (
+          <ImageMesh key={entity.id()} entity={entity} />
+        ))}
 
         <DrawingCanvas ref={canvasRef} width={1024} height={1024} disabled />
       </group>
     </>
+  )
+}
+
+const ImageMesh = ({ entity }: { entity: any }) => {
+  const [textureUrl, setTextureUrl] = useState(
+    entity.get(TextureUrl)?.url || kDefaultTextureUrl,
+  )
+  const [progress, setProgress] = useState(entity.get(Progress)?.progress || 0)
+
+  useTraitEffect(entity, TextureUrl, (textureUrlTrait) => {
+    if (textureUrlTrait) {
+      setTextureUrl(textureUrlTrait.url)
+    }
+  })
+
+  useTraitEffect(entity, Progress, (progressTrait) => {
+    if (progressTrait) {
+      setProgress(progressTrait.progress)
+    }
+  })
+
+  const texture = useTexture(textureUrl || kDefaultTextureUrl)
+  const position = entity.get(Position)
+  const scale = entity.get(Scale)
+
+  if (!position || !scale) {
+    return null
+  }
+
+  return (
+    <mesh
+      position={[
+        position.x - scale.x / 2,
+        position.y - scale.y / 2,
+        position.z,
+      ]}
+      scale={[scale.x, scale.y, scale.z]}
+    >
+      <shapeGeometry args={[getRoundedPlaneShape(1, 1, 0.05)]} />
+      <meshBasicMaterial
+        color='#ffffff'
+        side={THREE.DoubleSide}
+        // @ts-ignore
+        map={texture}
+        wireframe={progress > 0 && textureUrl === kDefaultTextureUrl}
+      />
+    </mesh>
   )
 }

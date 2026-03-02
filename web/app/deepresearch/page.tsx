@@ -42,11 +42,7 @@ interface DeepResearchAction {
 
 const iterateLogs = async (node: AsyncNode, setThoughts) => {
   console.log('Iterating logs @', node.getId())
-  node.setReaderOptions(
-    /* ordered */ true,
-    /* removeChunks */ true,
-    /* timeout */ -1,
-  )
+  node.setReaderOptions({ ordered: true, removeChunks: true, timeout: -1 })
   const textDecoder = new TextDecoder('utf-8')
   let idx = 0
   for await (const chunk of node) {
@@ -61,11 +57,11 @@ const observeNestedActions = async (
   actionsNode: AsyncNode,
   cb?: (action: DeepResearchAction) => Promise<void>,
 ) => {
-  actionsNode.setReaderOptions(
-    /* ordered */ true,
-    /* removeChunks */ true,
-    /* timeout */ -1,
-  )
+  actionsNode.setReaderOptions({
+    ordered: true,
+    removeChunks: true,
+    timeout: -1,
+  })
   for await (const chunk of actionsNode) {
     const [model, data] = decode(chunk.data) as [string, Uint8Array]
     const action = decode(data) as DeepResearchAction

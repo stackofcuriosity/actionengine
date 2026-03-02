@@ -168,11 +168,11 @@ const BlobByEntity = ({
 }
 
 const addLogsToMessages = async (logs: AsyncNode, setMessages: any) => {
-  logs.setReaderOptions(
-    /* ordered */ true,
-    /* removeChunks */ true,
-    /* timeout */ -1,
-  )
+  logs.setReaderOptions({
+    ordered: true,
+    removeChunks: true,
+    timeout: -1,
+  })
   const textDecoder = new TextDecoder('utf-8')
   let idx = 0
   for await (const chunk of logs) {
@@ -192,11 +192,11 @@ const subscribeToActionLogs = async (
   actionNode: AsyncNode,
   localLogs: AsyncNode,
 ) => {
-  actionNode.setReaderOptions(
-    /* ordered */ true,
-    /* removeChunks */ true,
-    /* timeout */ -1,
-  )
+  actionNode.setReaderOptions({
+    ordered: true,
+    removeChunks: true,
+    timeout: -1,
+  })
   for await (const chunk of actionNode) {
     console.log(chunk)
     await localLogs.put(chunk)

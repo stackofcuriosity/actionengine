@@ -1,4 +1,4 @@
-# Action Engine (archived)
+# Action Engine
 
 Action Engine is a cross-language library for building interactive applications
 that need streaming, multimodal, interactive capabilities. Think of:
@@ -30,7 +30,7 @@ Otherwise, you can install Action Engine directly from the GitHub repository.
 First, make sure you have a recent C++20-compatible `clang` installed, then run:
 
 ```bash
-pip install git+https://github.com/google-deepmind/actionengine -v
+pip install git+https://github.com/stackofcuriosity/actionengine -v
 python -c 'import actionengine; print(actionengine.to_chunk("Hello, world!"))'
 ```
 
@@ -143,15 +143,3 @@ several demo applications that showcase the capabilities of Action Engine. TBD:
 insert images for [text to image](https://actionengine.dev/blob),
 [deep research](https://actionengine.dev/deepresearch?q=alpha-demos) and
 [stateful LLM conversations](https://actionengine.dev/gemini?q=ollama).
-
-## Development log / to do list
-
-- [ ] Set up CI and publishing pipelines for PyPI and docs
-- [ ] Cover the essentials with tests
-- [ ] Ensure no fatal errors and no hangs in basic session usage, including
-  in Python bindings
-- [ ] Propagate action status to all output nodes
-- [ ] Make `ChunkStoreReader` and `ChunkStoreWriter` run tasks on a fiber
-  pool, not own fibers
-- [ ] Extend core PyBind11 bindings by more Pythonic interfaces more
-  comprehensively; revise object ownership model
