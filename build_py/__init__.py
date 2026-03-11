@@ -23,6 +23,7 @@ from pathlib import Path
 NAME = "actionengine"
 NAME_WITH_HYPHEN = "action-engine"
 REPO_ROOT = Path(__file__).parent.parent.resolve()
+BUILD_TYPE = "RelWithDebInfo"
 
 CLANG_RESOURCES = """- https://clang.llvm.org/get_started.html
 - https://launchpad.net/ubuntu/noble/+package/clang-19
@@ -129,7 +130,7 @@ def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):
     if (
             subprocess.Popen(
                 [str(REPO_ROOT / "scripts" / "configure.sh")],
-                env=os.environ.update({"CMAKE_BUILD_TYPE": "RelWithDebInfo"}),
+                env=os.environ.update({"CMAKE_BUILD_TYPE": BUILD_TYPE}),
             )
     ).wait() != 0:
         raise RuntimeError("Build failed during configure step.")
@@ -140,7 +141,7 @@ def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):
                     str(REPO_ROOT / "scripts" / "build_python.sh"),
                     "--only-rebuild-pybind11",
                 ],
-                env=os.environ.update({"CMAKE_BUILD_TYPE": "RelWithDebInfo"}),
+                env=os.environ.update({"CMAKE_BUILD_TYPE": BUILD_TYPE}),
             ).wait()
             != 0
     ):

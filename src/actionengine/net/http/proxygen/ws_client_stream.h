@@ -50,7 +50,7 @@ class WebsocketClientStream final : public WebsocketStream {
       std::string_view url, folly::EventBase* evb = nullptr,
       folly::HHWheelTimer* timer = nullptr);
 
-  WebsocketClientStream(std::string_view url);
+  explicit WebsocketClientStream(std::string_view url);
   ~WebsocketClientStream() override;
 
   void SetRequestHeaders(const proxygen::HTTPMessage& headers) const;
