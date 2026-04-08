@@ -20,6 +20,7 @@ target_include_directories(
 )
 target_link_libraries(
         actActions PRIVATE
+        act::util::boost_json
         absl::base
         absl::log
         absl::log_internal_check_op
@@ -27,7 +28,6 @@ target_link_libraries(
         absl::statusor
         absl::strings
         absl::strings_internal
-        Boost::json
 )
 target_link_libraries(
         actActions

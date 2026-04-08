@@ -15,19 +15,51 @@
 #include "actionengine/net/webrtc/signalling_client.h"
 
 #include <absl/container/flat_hash_map.h>
-#include <absl/log/log.h>
 #include <absl/strings/str_format.h>
 #include <absl/time/time.h>
 #include <boost/json/parse.hpp>
-#include <proxygen/lib/http/HTTPMessage.h>
 
+#include "actionengine/util/boost_asio_utils.h"
 #include "actionengine/util/status_macros.h"
+#include "boost/asio/detail/impl/kqueue_reactor.hpp"
+#include "boost/asio/detail/impl/reactive_socket_service_base.ipp"
+#include "boost/asio/detail/impl/service_registry.hpp"
+#include "boost/asio/execution/context_as.hpp"
+#include "boost/asio/execution/prefer_only.hpp"
+#include "boost/asio/impl/any_io_executor.ipp"
+#include "boost/asio/impl/execution_context.hpp"
+#include "boost/asio/impl/thread_pool.hpp"
+#include "boost/asio/thread_pool.hpp"
+#include "boost/beast/core/detail/config.hpp"
+#include "boost/beast/core/detail/type_traits.hpp"
+#include "boost/beast/core/impl/saved_handler.ipp"
+#include "boost/beast/core/impl/string.ipp"
+#include "boost/beast/core/role.hpp"
+#include "boost/beast/http/field.hpp"
+#include "boost/beast/http/fields.hpp"
+#include "boost/beast/http/impl/fields.hpp"
+#include "boost/beast/http/message.hpp"
+#include "boost/beast/websocket/detail/service.ipp"
+#include "boost/beast/websocket/impl/stream.hpp"
+#include "boost/beast/websocket/rfc6455.hpp"
+#include "boost/beast/websocket/stream.hpp"
+#include "boost/beast/websocket/stream_base.hpp"
+#include "boost/intrusive/detail/algo_type.hpp"
+#include "boost/intrusive/link_mode.hpp"
+#include "boost/json/string.hpp"
+#include "boost/json/value.hpp"
+#include "boost/move/detail/addressof.hpp"
+#include "boost/smart_ptr/make_shared_object.hpp"
+#include "boost/system/detail/error_code.hpp"
 
 namespace act::net {
 
 SignallingClient::SignallingClient(std::string_view address, uint16_t port,
                                    bool use_ssl)
-    : address_(address), port_(port), use_ssl_(use_ssl) {}
+    : address_(address),
+      port_(port),
+      use_ssl_(use_ssl),
+      thread_pool_(std::make_unique<boost::asio::thread_pool>(2)) {}
 
 SignallingClient::~SignallingClient() {
   act::MutexLock lock(&mu_);
@@ -35,9 +67,7 @@ SignallingClient::~SignallingClient() {
   on_offer_ = nullptr;
   on_candidate_ = nullptr;
   on_answer_ = nullptr;
-  mu_.unlock();
-  stream_.reset();
-  mu_.lock();
+  JoinInternal();
 }
 
 void SignallingClient::ResetCallbacks() {
@@ -47,28 +77,16 @@ void SignallingClient::ResetCallbacks() {
   on_answer_ = nullptr;
 }
 
-void SignallingClient::OnOffer(PeerJsonHandler on_offer) {
-  act::MutexLock lock(&mu_);
-  on_offer_ = std::move(on_offer);
-}
-
-void SignallingClient::OnCandidate(PeerJsonHandler on_candidate) {
-  act::MutexLock lock(&mu_);
-  on_candidate_ = std::move(on_candidate);
-}
-
-void SignallingClient::OnAnswer(PeerJsonHandler on_answer) {
-  act::MutexLock lock(&mu_);
-  on_answer_ = std::move(on_answer);
-}
-
-thread::Case SignallingClient::OnError() const {
-  return error_event_.OnEvent();
-}
-
-absl::Status SignallingClient::GetStatus() const {
-  act::MutexLock lock(&mu_);
-  return loop_status_;
+static absl::Status PrepareStreamWithHeaders(
+    BoostWebsocketStream* absl_nonnull stream,
+    const absl::flat_hash_map<std::string, std::string>& headers) {
+  auto decorator = [&headers](boost::beast::websocket::request_type& req) {
+    for (const auto& [key, value] : headers) {
+      req.set(key, value);
+    }
+  };
+  RETURN_IF_ERROR(PrepareClientStream(stream, std::move(decorator)));
+  return absl::OkStatus();
 }
 
 absl::Status SignallingClient::ConnectWithIdentity(
@@ -84,128 +102,132 @@ absl::Status SignallingClient::ConnectWithIdentity(
 
   identity_ = std::string(identity);
 
-  std::string url = absl::StrFormat(
-      "%s://%s:%d/%s", use_ssl_ ? "https" : "http", address_, port_, identity_);
+  ASSIGN_OR_RETURN(
+      stream_,
+      FiberAwareWebsocketStream::Connect(
+          *thread_pool_, address_, port_, absl::StrFormat("/%s", identity_),
+          /*prepare_stream_fn=*/
+          [&headers](BoostWebsocketStream* absl_nonnull stream,
+                     absl::AnyInvocable<void(
+                         boost::beast::websocket::request_type&)>) {
+            return PrepareStreamWithHeaders(stream, headers);
+          },
+          use_ssl_));
 
-  auto stream_or = http::WebsocketClientStream::Connect(url);
-  if (!stream_or.ok()) {
-    loop_status_ = stream_or.status();
+  loop_status_ = stream_->Start();
+  if (!loop_status_.ok()) {
     return loop_status_;
   }
-  stream_ = std::move(stream_or).value();
 
-  proxygen::HTTPMessage proxygen_headers;
-  for (const auto& [key, value] : headers) {
-    proxygen_headers.getHeaders().add(key, value);
-  }
-  stream_->SetRequestHeaders(proxygen_headers);
-
-  stream_->SetFrameCallback(
-      [this](http::WebsocketStream* s, http::WebsocketFrame* f) {
-        HandleFrame(s, f);
-      });
-  stream_->SetDoneCallback([this](http::WebsocketStream* s) { HandleDone(s); });
-
-  stream_->Start();
+  loop_ = thread::NewTree({}, [this]() {
+    act::MutexLock lock(&mu_);
+    RunLoop();
+  });
 
   return absl::OkStatus();
 }
 
-absl::Status SignallingClient::Send(const std::string& message) const {
-  act::MutexLock lock(&mu_);
-  if (!stream_) {
-    return absl::FailedPreconditionError("Not connected");
-  }
-  return stream_->SendText(message);
-}
+void SignallingClient::RunLoop() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+  std::optional<std::string> message;
+  absl::Status status;
 
-void SignallingClient::Cancel() {
-  act::MutexLock lock(&mu_);
-  CancelInternal();
-}
+  while (!thread::Cancelled()) {
+    message = std::nullopt;
 
-void SignallingClient::Join() {
-  // WebsocketClientStream is asynchronous, so we don't have a thread to join.
-}
+    mu_.unlock();
+    status = stream_->ReadText(absl::InfiniteDuration(), &message);
+    mu_.lock();
+    if (thread::Cancelled()) {
+      status = absl::CancelledError("SignallingClient cancelled");
+      break;
+    }
 
-void SignallingClient::CancelInternal() {
-  if (stream_ != nullptr) {
-    stream_->HalfClose(1000, "SignallingClient cancelled");
-  }
-  loop_status_ = absl::CancelledError("WebsocketActionEngineServer cancelled");
-}
+    if (!status.ok()) {
+      break;
+    }
 
-void SignallingClient::HandleFrame(http::WebsocketStream* stream,
-                                   http::WebsocketFrame* frame) {
-  if (frame == nullptr) {
-    return;
-  }
+    if (!message) {
+      if (absl::IsCancelled(status)) {
+        // Use the status from the read if it was already cancelled
+      } else {
+        status =
+            absl::ResourceExhaustedError("Underlying WS stream was closed.");
+      }
+      break;
+    }
 
-  if (frame->opcode != http::WSOpcode::kText) {
-    return;
-  }
+    boost::system::error_code error;
+    boost::json::value parsed_message = boost::json::parse(*message, error);
+    if (error) {
+      LOG(ERROR) << "WebsocketActionEngineServer parse() failed: "
+                 << error.message();
+      continue;
+    }
 
-  std::string message = frame->GetUnmaskedDataString();
+    std::string client_id;
+    if (const auto id_ptr = parsed_message.find_pointer("/id", error);
+        id_ptr == nullptr || error) {
+      LOG(ERROR) << "WebsocketActionEngineServer no 'id' field in message: "
+                 << *message;
+      continue;
+    } else {
+      client_id = id_ptr->as_string().c_str();
+    }
 
-  boost::system::error_code error;
-  boost::json::value parsed_message = boost::json::parse(message, error);
-  if (error) {
-    LOG(ERROR) << "WebsocketActionEngineServer parse() failed: "
-               << error.message();
-    return;
-  }
+    std::string type;
+    if (const auto type_ptr = parsed_message.find_pointer("/type", error);
+        type_ptr == nullptr || error) {
+      LOG(ERROR) << "WebsocketActionEngineServer no 'type' field in message: "
+                 << *message;
+      continue;
+    } else {
+      type = type_ptr->as_string().c_str();
+    }
 
-  std::string client_id;
-  if (const auto id_ptr = parsed_message.find_pointer("/id", error);
-      id_ptr == nullptr || error) {
-    LOG(ERROR) << "WebsocketActionEngineServer no 'id' field in message: "
-               << message;
-    return;
-  } else {
-    client_id = id_ptr->as_string().c_str();
-  }
+    if (type != "offer" && type != "candidate" && type != "answer") {
+      LOG(ERROR) << "WebsocketActionEngineServer unknown message type: " << type
+                 << " in message: " << *message;
+      continue;
+    }
 
-  std::string type;
-  if (const auto type_ptr = parsed_message.find_pointer("/type", error);
-      type_ptr == nullptr || error) {
-    LOG(ERROR) << "WebsocketActionEngineServer no 'type' field in message: "
-               << message;
-    return;
-  } else {
-    type = type_ptr->as_string().c_str();
-  }
+    if (type == "offer" && on_offer_) {
+      mu_.unlock();
+      on_offer_(client_id, std::move(parsed_message));
+      mu_.lock();
+      continue;
+    }
 
-  if (type != "offer" && type != "candidate" && type != "answer") {
-    LOG(ERROR) << "WebsocketActionEngineServer unknown message type: " << type
-               << " in message: " << message;
-    return;
-  }
+    if (type == "candidate" && on_candidate_) {
+      mu_.unlock();
+      on_candidate_(client_id, std::move(parsed_message));
+      mu_.lock();
+      continue;
+    }
 
-  PeerJsonHandler handler = nullptr;
-  {
-    act::MutexLock lock(&mu_);
-    if (type == "offer") {
-      handler = on_offer_;
-    } else if (type == "candidate") {
-      handler = on_candidate_;
-    } else if (type == "answer") {
-      handler = on_answer_;
+    if (type == "answer" && on_answer_) {
+      mu_.unlock();
+      on_answer_(client_id, std::move(parsed_message));
+      mu_.lock();
+      continue;
     }
   }
 
-  if (handler) {
-    handler(client_id, std::move(parsed_message));
-  }
-}
+  loop_status_ = status;
 
-void SignallingClient::HandleDone(http::WebsocketStream* stream) {
-  act::MutexLock lock(&mu_);
-  loop_status_ = stream->GetStatus();
   if (!loop_status_.ok()) {
     on_answer_ = nullptr;
     on_candidate_ = nullptr;
     on_offer_ = nullptr;
     error_event_.Notify();
+  }
+}
+
+void SignallingClient::CloseStreamAndJoinLoop()
+    ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+  if (loop_ != nullptr) {
+    loop_->Cancel();
+    loop_->Join();
+    loop_ = nullptr;
   }
 }
 }  // namespace act::net

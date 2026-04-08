@@ -15,18 +15,21 @@
 #ifndef ACTIONENGINE_NET_WEBRTC_SIGNALLING_CLIENT_H_
 #define ACTIONENGINE_NET_WEBRTC_SIGNALLING_CLIENT_H_
 
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include <absl/base/thread_annotations.h>
 #include <absl/container/flat_hash_map.h>
+#include <absl/log/log.h>
 #include <absl/status/status.h>
 #include <boost/json/value.hpp>
 
 #include "actionengine/concurrency/concurrency.h"
-#include "actionengine/net/http/proxygen/ws_client_stream.h"
+#include "actionengine/net/websockets/fiber_aware_websocket_stream.h"
 
 /**
  * @file
@@ -61,44 +64,84 @@ class SignallingClient {
 
   void ResetCallbacks();
 
-  void OnOffer(PeerJsonHandler on_offer);
+  void OnOffer(PeerJsonHandler on_offer) { on_offer_ = std::move(on_offer); }
 
-  void OnCandidate(PeerJsonHandler on_candidate);
+  void OnCandidate(PeerJsonHandler on_candidate) {
+    on_candidate_ = std::move(on_candidate);
+  }
 
-  void OnAnswer(PeerJsonHandler on_answer);
+  void OnAnswer(PeerJsonHandler on_answer) {
+    on_answer_ = std::move(on_answer);
+  }
 
-  thread::Case OnError() const;
+  thread::Case OnError() const { return error_event_.OnEvent(); }
 
-  absl::Status GetStatus() const;
+  absl::Status GetStatus() const {
+    act::MutexLock lock(&mu_);
+    return loop_status_;
+  }
 
   absl::Status ConnectWithIdentity(
       std::string_view identity,
       const absl::flat_hash_map<std::string, std::string>& headers = {});
 
-  absl::Status Send(const std::string& message) const;
+  absl::Status Send(const std::string& message) {
+    return stream_->WriteText(message);
+  }
 
-  void Cancel();
+  void Cancel() {
+    act::MutexLock lock(&mu_);
+    CancelInternal();
+  }
 
-  void Join();
+  void Join() {
+    act::MutexLock lock(&mu_);
+    JoinInternal();
+  }
 
  private:
-  void CancelInternal() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
+  void CancelInternal() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+    if (loop_ != nullptr) {
+      loop_->Cancel();
+    }
+    if (const absl::Status status = stream_->Close(); !status.ok()) {
+      LOG(ERROR) << "SignallingClient::Cancel failed: " << status;
+    }
+    if (loop_ != nullptr) {
+      loop_status_ =
+          absl::CancelledError("WebsocketActionEngineServer cancelled");
+    }
+  }
 
-  void HandleFrame(http::WebsocketStream* stream,
-                   http::WebsocketFrame* frame);
+  void JoinInternal() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+    if (loop_ != nullptr) {
+      mu_.unlock();
+      loop_->Join();
+      mu_.lock();
 
-  void HandleDone(http::WebsocketStream* stream);
+      loop_ = nullptr;
+
+      thread_pool_->stop();
+      thread_pool_->join();
+    }
+  }
+
+  void RunLoop() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
+
+  void CloseStreamAndJoinLoop() ABSL_EXCLUSIVE_LOCKS_REQUIRED(mu_);
 
   std::string identity_;
   const std::string address_;
   const uint16_t port_;
   const bool use_ssl_;
 
-  PeerJsonHandler on_offer_ ABSL_GUARDED_BY(mu_);
-  PeerJsonHandler on_candidate_ ABSL_GUARDED_BY(mu_);
-  PeerJsonHandler on_answer_ ABSL_GUARDED_BY(mu_);
+  PeerJsonHandler on_offer_;
+  PeerJsonHandler on_candidate_;
+  PeerJsonHandler on_answer_;
 
-  std::unique_ptr<http::WebsocketClientStream> stream_ ABSL_GUARDED_BY(mu_);
+  std::unique_ptr<boost::asio::thread_pool> thread_pool_;
+  std::unique_ptr<FiberAwareWebsocketStream> stream_;
+  std::unique_ptr<thread::Fiber> loop_;
   absl::Status loop_status_ ABSL_GUARDED_BY(mu_);
   mutable act::Mutex mu_;
   thread::PermanentEvent error_event_;
@@ -106,4 +149,4 @@ class SignallingClient {
 
 }  // namespace act::net
 
-#endif  // ACTIONENGINE_NET_WEBRTC_SIGNALLING_CLIENT_H_
+#endif

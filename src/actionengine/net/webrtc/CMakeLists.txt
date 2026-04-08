@@ -16,7 +16,6 @@ target_include_directories(
 )
 target_link_libraries(
         actNetWebrtc PUBLIC
-        Boost::json
         LibDataChannel::LibDataChannel
         act::net::http
         act::net::http::proxygen
@@ -26,6 +25,7 @@ target_link_libraries(
         cppack
         act::concurrency
         act::data
+        act::net::asio_websockets
         act::nodes
         act::stores
 )
@@ -56,6 +56,7 @@ target_link_libraries(
         actNetWebrtcPybind11 PRIVATE
         act::concurrency
         act::data
+        act::net::asio_websockets
         act::net::http
 )
 target_include_directories(

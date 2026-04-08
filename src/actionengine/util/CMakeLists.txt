@@ -18,6 +18,33 @@ target_link_libraries(
         actUtilBoostAsio PRIVATE
         absl::base
         act::concurrency
+        Boost::asio
+
+)
+# --------------------------------------------------------------------------
+add_library(
+        actUtilBoostJson STATIC
+        boost_json.h
+        boost_json.cc
+)
+add_library(
+        act::util::boost_json ALIAS
+        actUtilBoostJson
+)
+target_include_directories(
+        actUtilBoostJson PUBLIC
+        ${ACTIONENGINE_PROJECT_TOP_LEVEL}
+        ${ACTIONENGINE_INCLUDE_DIR}
+        ${Boost_INCLUDE_DIRS}
+        ${ACTIONENGINE_THIRD_PARTY_INCLUDE_DIRS}
+)
+target_link_libraries(
+        actUtilBoostJson PUBLIC
+        Boost::json
+)
+target_link_libraries(
+        actUtilBoostJson PRIVATE
+        absl::status
 )
 # --------------------------------------------------------------------------
 add_library(

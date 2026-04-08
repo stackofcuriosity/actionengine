@@ -22,14 +22,10 @@
 
 #include <absl/status/statusor.h>
 #include <absl/strings/match.h>
-#include <boost/json/object.hpp>               // NOLINT
-#include <boost/json/serialize.hpp>            // NOLINT
-#include <boost/json/string.hpp>               // NOLINT
-#include <boost/json/value.hpp>                // NOLINT
-#include <boost/system/detail/error_code.hpp>  // NOLINT
 
 #include "actionengine/actions/action.h"
 #include "actionengine/data/types.h"
+#include "actionengine/util/boost_json.h"
 #include "actionengine/util/map_util.h"
 #include "actionengine/util/random.h"
 #include "actionengine/util/status_macros.h"
