@@ -1,6 +1,6 @@
 [project]
 name = "action-engine"
-version = "0.4.1"
+version = "0.4.2"
 
 authors = [{ name = "Helena Pankov", email = "helenapankov@actionengine.dev" }]
 description = "API and UI SDK for sleek applications with agentic, generative, streaming capabilities"

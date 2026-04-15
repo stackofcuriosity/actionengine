@@ -41,11 +41,11 @@ class AsyncNode(_C.nodes.AsyncNode):
     """
 
     def __init__(
-            self,
-            node_id: str,
-            chunk_store: Optional[_C.chunk_store.ChunkStore] = None,
-            node_map: "Optional[_C.nodes.NodeMap]" = None,
-            serializer_registry: Optional[data.SerializerRegistry] = None,
+        self,
+        node_id: str,
+        chunk_store: Optional[_C.chunk_store.ChunkStore] = None,
+        node_map: "Optional[_C.nodes.NodeMap]" = None,
+        serializer_registry: Optional[data.SerializerRegistry] = None,
     ):
         """Constructor for AsyncNode.
 
@@ -65,7 +65,7 @@ class AsyncNode(_C.nodes.AsyncNode):
         """
         self._deserialize_automatically_preference: bool | None = None
         self._serializer_registry = (
-                serializer_registry or data.get_global_serializer_registry()
+            serializer_registry or data.get_global_serializer_registry()
         )
         self._reader_options_set = False
         super().__init__(node_id, node_map, chunk_store)
@@ -85,7 +85,7 @@ class AsyncNode(_C.nodes.AsyncNode):
         )
 
     def _consume_sync(
-            self, timeout: float = -1.0, allow_none: bool = False
+        self, timeout: float = -1.0, allow_none: bool = False
     ) -> Any:
         item = self.next_sync(timeout)
         if item is None:
@@ -101,7 +101,7 @@ class AsyncNode(_C.nodes.AsyncNode):
         return item
 
     def consume(
-            self, timeout: float = -1.0, allow_none: bool = False
+        self, timeout: float = -1.0, allow_none: bool = False
     ) -> Any | Awaitable[Any]:
         try:
             asyncio.get_running_loop()
@@ -151,13 +151,13 @@ class AsyncNode(_C.nodes.AsyncNode):
         )  # pytype: disable=attribute-error
 
     async def next_fragment(
-            self, timeout: float = -1.0
+        self, timeout: float = -1.0
     ) -> Optional[NodeFragment]:
         """Returns the next fragment in the store, or None if the store is empty."""
         return await asyncio.to_thread(self.next_fragment_sync, timeout)
 
     def next_fragment_sync(
-            self, timeout: float = -1.0
+        self, timeout: float = -1.0
     ) -> Optional[NodeFragment]:
         """Returns the next fragment in the store, or None if the store is empty."""
         return _C.nodes.AsyncNode.next_fragment(
@@ -165,7 +165,7 @@ class AsyncNode(_C.nodes.AsyncNode):
         )  # pytype: disable=attribute-error
 
     def put_fragment(
-            self, fragment: NodeFragment, seq: int = -1
+        self, fragment: NodeFragment, seq: int = -1
     ):  # pylint: disable=useless-parent-delegation
         """Puts a fragment into the node's chunk store.
 
@@ -185,7 +185,7 @@ class AsyncNode(_C.nodes.AsyncNode):
         )  # pytype: disable=attribute-error
 
     def put_chunk(
-            self, chunk: Chunk, seq: int = -1, final: bool = False
+        self, chunk: Chunk, seq: int = -1, final: bool = False
     ):  # pylint: disable=useless-parent-delegation
         """Puts a chunk into the node's chunk store.
 
@@ -206,19 +206,19 @@ class AsyncNode(_C.nodes.AsyncNode):
         )  # pytype: disable=attribute-error,
 
     def put_and_finalize(
-            self,
-            obj: Any,
-            seq: int = -1,
-            mimetype: str | None = None,
+        self,
+        obj: Any,
+        seq: int = -1,
+        mimetype: str | None = None,
     ):
         return self.put(obj, seq, True, mimetype)
 
     def put_sync(
-            self,
-            obj: Any,
-            seq: int = -1,
-            final: bool = False,
-            mimetype: str | None = None,
+        self,
+        obj: Any,
+        seq: int = -1,
+        final: bool = False,
+        mimetype: str | None = None,
     ) -> None:
         """Puts an object into the node's chunk store."""
 
@@ -244,12 +244,12 @@ class AsyncNode(_C.nodes.AsyncNode):
         return self.put_chunk(chunk, seq, final)
 
     def put(
-            self,
-            obj: Any,
-            seq: int = -1,
-            final: bool = False,
-            mimetype: str | None = None,
-    ):
+        self,
+        obj: Any,
+        seq: int = -1,
+        final: bool = False,
+        mimetype: str | None = None,
+    ) -> None | Awaitable[None]:
         try:
             asyncio.get_running_loop()
         except RuntimeError:
@@ -284,7 +284,7 @@ class AsyncNode(_C.nodes.AsyncNode):
             final=True,
         )
 
-    def finalize(self):
+    def finalize(self) -> None | Awaitable[None]:
         try:
             asyncio.get_running_loop()
         except RuntimeError:
@@ -299,12 +299,12 @@ class AsyncNode(_C.nodes.AsyncNode):
         )  # pytype: disable=attribute-error
 
     def set_reader_options(
-            self,
-            ordered: bool | None = None,
-            remove_chunks: bool | None = None,
-            n_chunks_to_buffer: int | None = None,
-            timeout: float | None = None,
-            start_seq_or_offset: int = 0,
+        self,
+        ordered: bool | None = None,
+        remove_chunks: bool | None = None,
+        n_chunks_to_buffer: int | None = None,
+        timeout: float | None = None,
+        start_seq_or_offset: int = 0,
     ) -> "AsyncNode":
         """Sets the options for the default reader on the node.
 

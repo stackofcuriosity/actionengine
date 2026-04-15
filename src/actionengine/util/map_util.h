@@ -41,20 +41,42 @@ const Value& FindOrDie(const absl::flat_hash_map<RecordKey, Value>& map,
 
 template <typename RecordKey, typename Value, typename QueryKey>
 absl::StatusOr<std::reference_wrapper<Value>> FindValue(
-    absl::flat_hash_map<RecordKey, Value>& map, const QueryKey& key) {
-  auto it = map.find(key);
+    absl::flat_hash_map<RecordKey, Value>& map, QueryKey&& key) {
+  auto it = map.find(std::forward<QueryKey>(key));
   if (it == map.end()) {
     return absl::NotFoundError("Key not found in map.");
   }
   return it->second;
 }
 
+template <typename RecordKey, typename Value>
+absl::StatusOr<std::reference_wrapper<Value>> FindValue(
+    absl::flat_hash_map<RecordKey, Value>& map, std::string_view key) {
+  auto it = map.find(key);
+  if (it == map.end()) {
+    return absl::NotFoundError(
+        absl::StrFormat("Key not found in map: %s", key));
+  }
+  return it->second;
+}
+
 template <typename RecordKey, typename Value, typename QueryKey>
 absl::StatusOr<std::reference_wrapper<const Value>> FindValue(
-    const absl::flat_hash_map<RecordKey, Value>& map, const QueryKey& key) {
-  const auto it = map.find(key);
+    const absl::flat_hash_map<RecordKey, Value>& map, QueryKey&& key) {
+  const auto it = map.find(std::forward<QueryKey>(key));
   if (it == map.end()) {
     return absl::NotFoundError("Key not found in map.");
+  }
+  return it->second;
+}
+
+template <typename RecordKey, typename Value>
+absl::StatusOr<std::reference_wrapper<const Value>> FindValue(
+    const absl::flat_hash_map<RecordKey, Value>& map, std::string_view key) {
+  const auto it = map.find(key);
+  if (it == map.end()) {
+    return absl::NotFoundError(
+        absl::StrFormat("Key not found in map: %s", key));
   }
   return it->second;
 }

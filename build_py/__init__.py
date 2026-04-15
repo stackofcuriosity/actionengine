@@ -23,7 +23,7 @@ from pathlib import Path
 NAME = "actionengine"
 NAME_WITH_HYPHEN = "action-engine"
 REPO_ROOT = Path(__file__).parent.parent.resolve()
-BUILD_TYPE = "RelWithDebInfo"
+BUILD_TYPE = "Debug"
 
 CLANG_RESOURCES = """- https://clang.llvm.org/get_started.html
 - https://launchpad.net/ubuntu/noble/+package/clang-19

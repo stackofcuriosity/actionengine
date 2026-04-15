@@ -56,9 +56,12 @@ target_sources(
         actions_pybind11.h
 )
 target_link_libraries(
+        actActionsPybind11 PUBLIC
+        act::actions
+)
+target_link_libraries(
         actActionsPybind11 PRIVATE
         absl::log
-        act::actions
         ${ACTIONENGINE_PYBIND11_DEPENDENCIES}
 )
 target_include_directories(
