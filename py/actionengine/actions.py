@@ -59,17 +59,41 @@ def wrap_handler(handler: ActionHandler) -> ActionHandler:
         return inner
 
 
+class ActionSchemaPort(_C.actions.ActionSchemaPort):
+    def __init__(
+        self,
+        name: str,
+        port_type: str | type[BaseModel],
+        description: str = "",
+        required: bool = False,
+    ):
+        """Constructor for ActionSchemaPort.
+
+        Args:
+          name: The name of the action port.
+          port_type: The type of the action port.
+          description: The description of the action port.
+          required: Whether the action port is required.
+        """
+        self._py_type = port_type
+        if isinstance(port_type, type) and issubclass(port_type, BaseModel):
+            self._py_type = port_type
+            port_type = "__BaseModel__"
+
+        super().__init__(name, port_type, description, required)
+
+
 class ActionSchema(_C.actions.ActionSchema):
     """A schema of an ActionEngine Action."""
 
     # pylint: disable-next=[useless-parent-delegation]
     def __init__(
-            self,
-            *,
-            name: str = "",
-            inputs: list[tuple[str, str | type[BaseModel]]],
-            outputs: list[tuple[str, str | type[BaseModel]]],
-            description: str = "",
+        self,
+        *,
+        name: str = "",
+        inputs: list[tuple[str, str | type[BaseModel]]],
+        outputs: list[tuple[str, str | type[BaseModel]]],
+        description: str = "",
     ):
         """Constructor for ActionSchema.
 
@@ -78,43 +102,78 @@ class ActionSchema(_C.actions.ActionSchema):
           inputs: The inputs of the action definition.
           outputs: The outputs of the action definition.
         """
-        inputs = [
-            (
-                name,
-                (mimetype if isinstance(mimetype, str) else "__BaseModel__"),
-            )
-            for name, mimetype in inputs
-        ]
-        outputs = [
-            (
-                name,
-                (mimetype if isinstance(mimetype, str) else "__BaseModel__"),
-            )
-            for name, mimetype in outputs
-        ]
+        self._py_inputs = dict()
+        self._py_outputs = dict()
+
+        input_ports = []
+        output_ports = []
+
+        for input_port_or_tuple in inputs:
+            if isinstance(input_port_or_tuple, tuple):
+                input_name, input_type = input_port_or_tuple
+                self._py_inputs[input_name] = input_type
+                input_port = ActionSchemaPort(input_name, input_type)
+            else:
+                input_port: ActionSchemaPort = input_port_or_tuple
+                self._py_inputs[input_port.name] = input_port._py_type
+            input_ports.append(input_port)
+
+        for output_port_or_tuple in outputs:
+            if isinstance(output_port_or_tuple, tuple):
+                output_name, output_type = output_port_or_tuple
+                self._py_outputs[output_name] = output_type
+                output_port = ActionSchemaPort(output_name, output_type)
+            else:
+                output_port: ActionSchemaPort = output_port_or_tuple
+                self._py_outputs[output_port.name] = output_port._py_type
+            output_ports.append(output_port)
+
         super().__init__(
-            name=name, inputs=inputs, outputs=outputs, description=description
+            name=name,
+            inputs=input_ports,
+            outputs=output_ports,
+            description=description,
         )
+
+    def get_python_type_for_port(self, name: str):
+        if name in self._py_inputs:
+            return self._py_inputs[name]
+
+        if name in self._py_outputs:
+            return self._py_outputs[name]
+
+        raise ValueError(f"Unknown port name: {name}")
 
 
 class ActionRegistry(_C.actions.ActionRegistry):
     """A Pythonic wrapper for the raw pybind11 ActionRegistry bindings."""
 
+    def __init__(self):
+        self._add_python_specific_attributes()
+        super().__init__()
+
+    def _add_python_specific_attributes(self):
+        """Adds Python-specific attributes to the action."""
+        if not hasattr(self, "_raw_handlers"):
+            self._raw_handlers = dict()
+
     def register(
-            self,
-            name: str,
-            schema: _C.actions.ActionSchema,
-            handler: Any = do_nothing,
+        self,
+        name: str,
+        schema: _C.actions.ActionSchema,
+        handler: Any = do_nothing,
     ) -> None:
         """Registers an action schema and handler."""
 
         if not schema.name:
             schema.name = name
+
+        self._raw_handlers[name] = handler
         super().register(name, schema, wrap_handler(handler))
 
     # pylint: disable-next=[useless-parent-delegation]
     def make_action_message(
-            self, name: str, action_id: str
+        self, name: str, action_id: str
     ) -> data.ActionMessage:
         """Creates an action message.
 
@@ -127,14 +186,17 @@ class ActionRegistry(_C.actions.ActionRegistry):
         """
         return super().make_action_message(name, action_id)
 
+    def get_handler(self, name: str):
+        return self._raw_handlers.get(name, None)
+
     def make_action(
-            self,
-            name: str,
-            action_id: str = "",
-            *,
-            node_map: NodeMap | None = None,
-            stream: _C.service.WireStream | None = None,
-            session: _C.service.Session | None = None,
+        self,
+        name: str,
+        action_id: str = "",
+        *,
+        node_map: NodeMap | None = None,
+        stream: _C.service.WireStream | None = None,
+        session: _C.service.Session | None = None,
     ) -> "Action":
         """Creates an action."""
 
@@ -161,31 +223,34 @@ class Action(_C.actions.Action):
 
     @staticmethod
     def from_schema(
-            schema: ActionSchema,
-            action_id: str = "",
+        schema: ActionSchema,
+        action_id: str = "",
     ):
         """Creates an action from a schema."""
-        return utils.wrap_pybind_object(
+        action = utils.wrap_pybind_object(
             Action,
             _C.actions.Action(schema, action_id),
         )
+        action.bind_node_map(NodeMap())
+        return action
 
     def _add_python_specific_attributes(self):
         """Adds Python-specific attributes to the action."""
         if not hasattr(self, "_schema"):
             self._schema = self.get_schema()
 
-    async def wait_until_complete(self):
-        return await asyncio.to_thread(super().wait_until_complete)
+    async def wait_until_complete(self, timeout: float = -1.0):
+        """Waits for the action to complete with an optional timeout."""
+        return await asyncio.to_thread(super().wait_until_complete, timeout)
 
     async def call(
-            self, wire_message_headers: dict[str, bytes] | None = None
+        self, wire_message_headers: dict[str, bytes] | None = None
     ) -> None:
         """Calls the action by sending the action message to the stream."""
         await asyncio.to_thread(self.call_sync, wire_message_headers)
 
     async def call_and_wait_for_dispatch_status(
-            self, wire_message_headers: dict[str, bytes] | None = None
+        self, wire_message_headers: dict[str, bytes] | None = None
     ) -> None:
         """Calls the action and waits for the dispatch status."""
         await asyncio.to_thread(
@@ -194,15 +259,15 @@ class Action(_C.actions.Action):
         )
 
     def call_sync(
-            self,
-            wire_message_headers: dict[str, bytes] | None = None,
+        self,
+        wire_message_headers: dict[str, bytes] | None = None,
     ) -> None:
         """Calls the action by sending the action message to the stream."""
         super().call(wire_message_headers)
 
     def call_and_wait_for_dispatch_status_sync(
-            self,
-            wire_message_headers: dict[str, bytes] | None = None,
+        self,
+        wire_message_headers: dict[str, bytes] | None = None,
     ) -> None:
         """Calls the action and waits for the dispatch status synchronously."""
         super().call_and_wait_for_dispatch_status(wire_message_headers)
@@ -223,7 +288,7 @@ class Action(_C.actions.Action):
         return utils.wrap_pybind_object(NodeMap, super().get_node_map())
 
     def get_input(
-            self, name: str, bind_stream: bool | None = None
+        self, name: str, bind_stream: bool | None = None
     ) -> AsyncNode:
         """Returns the input node with the given name.
 
@@ -242,7 +307,7 @@ class Action(_C.actions.Action):
         )
 
     def get_output(
-            self, name: str, bind_stream: bool | None = None
+        self, name: str, bind_stream: bool | None = None
     ) -> AsyncNode:
         """Returns the output node with the given name.
 
@@ -280,7 +345,7 @@ class Action(_C.actions.Action):
         return utils.wrap_pybind_object(AsyncNode, node)
 
     def make_action_in_same_session(
-            self, name: str, action_id: str = ""
+        self, name: str, action_id: str = ""
     ) -> "Action":
         """Creates an action in the same session."""
         return utils.wrap_pybind_object(
@@ -294,11 +359,19 @@ class Action(_C.actions.Action):
         super().run_in_background()
         return self
 
-    def bind_handler(self, handler: ActionHandler) -> None:
+    def bind_handler(self, handler: ActionHandler) -> "Action":
         """Binds a handler to the action."""
         super().bind_handler(wrap_handler(handler))
+        return self
 
-    def bind_node_map(self, node_map: NodeMap) -> None:
+    def bind_node_map(self, node_map: NodeMap) -> "Action":
         """Binds a NodeMap to the action."""
         super().bind_node_map(node_map)
         self._node_map = node_map
+        return self
+
+    def bind_registry(self, registry: ActionRegistry) -> "Action":
+        """Binds an ActionRegistry to the action."""
+        super().bind_registry(registry)
+        self._registry = registry
+        return self

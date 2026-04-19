@@ -1,6 +1,5 @@
 from . import deep_research
 from . import echo
-from . import gemini
 from . import gemini_fc
 from . import memory
 from . import ocr
@@ -11,7 +10,6 @@ from . import redis
 __all__ = [
     "deep_research",
     "echo",
-    "gemini",
     "gemini_fc",
     "memory",
     "ocr",

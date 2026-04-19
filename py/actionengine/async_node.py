@@ -210,7 +210,7 @@ class AsyncNode(_C.nodes.AsyncNode):
         obj: Any,
         seq: int = -1,
         mimetype: str | None = None,
-    ):
+    ) -> None | Awaitable[None]:
         return self.put(obj, seq, True, mimetype)
 
     def put_sync(
@@ -262,6 +262,14 @@ class AsyncNode(_C.nodes.AsyncNode):
             final,
             mimetype,
         )
+
+    async def copy_from(self, src: "AsyncNode"):
+        """Populates the node with the contents of another node."""
+
+        with src.deserialize_automatically(False) as src:
+            async for chunk in src:
+                self.put_chunk(chunk)
+            await self.finalize()
 
     def put_text(self, text: str, seq: int = -1, final: bool = False):
         """Puts a text/plain chunk into the node's chunk store."""

@@ -47,19 +47,19 @@ ActionRegistry::ActionRegistry() {
                ASSIGN_OR_RETURN(const ActionSchema& schema, GetSchema(name));
 
                boost::json::array inputs_obj;
-               for (const auto& [input_name, input_type] : schema.inputs) {
+               for (const auto& [_, input_port] : schema.inputs) {
                  boost::json::object input_obj;
-                 input_obj["name"] = boost::json::string(input_name);
-                 input_obj["type"] = boost::json::string(input_type);
+                 input_obj["name"] = boost::json::string(input_port.name);
+                 input_obj["type"] = boost::json::string(input_port.type);
                  inputs_obj.push_back(std::move(input_obj));
                }
                schema_obj["inputs"] = std::move(inputs_obj);
 
                boost::json::array outputs_obj;
-               for (const auto& [output_name, output_type] : schema.outputs) {
+               for (const auto& [_, output_port] : schema.outputs) {
                  boost::json::object output_obj;
-                 output_obj["name"] = boost::json::string(output_name);
-                 output_obj["type"] = boost::json::string(output_type);
+                 output_obj["name"] = boost::json::string(output_port.name);
+                 output_obj["type"] = boost::json::string(output_port.type);
                  outputs_obj.push_back(std::move(output_obj));
                }
                schema_obj["outputs"] = std::move(outputs_obj);

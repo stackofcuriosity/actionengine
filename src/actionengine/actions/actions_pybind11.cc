@@ -28,6 +28,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/pytypes.h>
 #include <pybind11/stl.h>
+#include <pybind11/stl_bind.h>
 #include <pybind11_abseil/absl_casters.h>
 #include <pybind11_abseil/import_status_module.h>
 #include <pybind11_abseil/status_caster.h>
@@ -36,6 +37,7 @@
 #include "actionengine/actions/action.h"
 #include "actionengine/nodes/node_map.h"
 #include "actionengine/service/session.h"
+#include "actionengine/util/random.h"
 #include "actionengine/util/status_macros.h"
 #include "actionengine/util/utils_pybind11.h"
 
@@ -57,6 +59,10 @@ struct PyUserData {
 
     py::object empty2;
     std::swap(lock, empty2);
+
+    py::object empty3;
+    std::swap(task_group, empty3);
+
     obj_refs.clear();
   }
 
@@ -64,6 +70,7 @@ struct PyUserData {
   thread::PermanentEvent done;
   py::object future = py::none();
   py::object lock = py::none();
+  py::object task_group = py::none();
   std::vector<py::object> obj_refs;
 };
 
@@ -131,6 +138,7 @@ static std::shared_ptr<PyUserData> EnsurePyUserData(
   user_data->action = action;
   user_data->future = GetGloballySavedEventLoop().attr("create_future")();
   user_data->lock = py::module::import("threading").attr("Lock")();
+  user_data->task_group = py::module::import("asyncio").attr("TaskGroup")();
   action->SetUserData("_py_user_data", user_data);
   return user_data;
 }
@@ -224,19 +232,73 @@ absl::StatusOr<ActionHandler> MakeSimpleActionHandler(py::handle py_handler) {
   };
 }
 
-void BindActionSchema(py::handle scope, std::string_view name) {
-  py::classh<ActionSchema>(scope, std::string(name).c_str())
+void BindActionSchemaPort(py::handle scope, std::string_view name) {
+  py::bind_map<absl::flat_hash_map<std::string, ActionSchemaPort>>(
+      scope, "ActionSchemaPortMap");
+  py::class_<ActionSchemaPort>(scope, std::string(name).c_str())
       .def(py::init<>())
-      .def(MakeSameObjectRefConstructor<ActionSchema>())
+      .def(py::init([](std::string_view name, std::string_view mimetype,
+                       std::string_view description = "",
+                       bool required = false) {
+             return ActionSchemaPort{std::string(name), std::string(mimetype),
+                                     std::string(description), required};
+           }),
+           py::arg("name"), py::arg("mimetype"), py::arg_v("description", ""),
+           py::arg_v("required", false))
+      .def_readwrite("name", &ActionSchemaPort::name)
+      .def_readwrite("type", &ActionSchemaPort::type)
+      .def_readwrite("description", &ActionSchemaPort::description)
+      .def_readwrite("extra_type_info", &ActionSchemaPort::extra_type_info)
+      .def_readwrite("required", &ActionSchemaPort::required)
+      // .def("__repr__",
+      //      [](const ActionSchemaPort& def) { return absl::StrCat(def); })
+      .doc() = "A port of an action schema.";
+}
+
+void BindActionSchema(py::handle scope, std::string_view name) {
+  py::class_<ActionSchema>(scope, std::string(name).c_str())
+      .def(py::init<>())
+      // .def(MakeSameObjectRefConstructor<ActionSchema>())
       .def(py::init([](std::string_view action_name,
                        const std::vector<NameAndMimetype>& inputs,
                        const std::vector<NameAndMimetype>& outputs,
                        std::string_view description = "") {
-             NameToMimetype input_map(inputs.begin(), inputs.end());
-             NameToMimetype output_map(outputs.begin(), outputs.end());
-             return std::make_shared<ActionSchema>(std::string(action_name),
-                                                   input_map, output_map,
-                                                   std::string(description));
+             absl::flat_hash_map<std::string, ActionSchemaPort> input_ports;
+             input_ports.reserve(inputs.size());
+             for (auto& [input_name, mimetype] : inputs) {
+               input_ports[input_name] = ActionSchemaPort{input_name, mimetype};
+             }
+             absl::flat_hash_map<std::string, ActionSchemaPort> output_ports;
+             output_ports.reserve(outputs.size());
+             for (auto& [output_name, mimetype] : outputs) {
+               output_ports[output_name] =
+                   ActionSchemaPort{output_name, mimetype};
+             }
+             return ActionSchema(
+                 std::string(action_name), std::move(input_ports),
+                 std::move(output_ports), std::string(description));
+           }),
+           py::kw_only(), py::arg("name"),
+           py::arg_v("inputs", std::vector<NameAndMimetype>()),
+           py::arg_v("outputs", std::vector<NameAndMimetype>()),
+           py::arg_v("description", ""))
+      .def(py::init([](std::string_view action_name,
+                       const std::vector<ActionSchemaPort>& inputs,
+                       const std::vector<ActionSchemaPort>& outputs,
+                       std::string_view description = "") {
+             absl::flat_hash_map<std::string, ActionSchemaPort> input_ports;
+             input_ports.reserve(inputs.size());
+             for (const auto& port : inputs) {
+               input_ports[port.name] = port;
+             }
+             absl::flat_hash_map<std::string, ActionSchemaPort> output_ports;
+             output_ports.reserve(outputs.size());
+             for (const auto& port : outputs) {
+               output_ports[port.name] = port;
+             }
+             return ActionSchema(
+                 std::string(action_name), std::move(input_ports),
+                 std::move(output_ports), std::string(description));
            }),
            py::kw_only(), py::arg("name"),
            py::arg_v("inputs", std::vector<NameAndMimetype>()),
@@ -302,12 +364,10 @@ void BindActionRegistry(py::handle scope, std::string_view name) {
       .def(
           "get_schema",
           [](const std::shared_ptr<ActionRegistry>& self,
-             std::string_view action_name)
-              -> absl::StatusOr<std::shared_ptr<const ActionSchema>> {
+             std::string_view action_name) -> absl::StatusOr<ActionSchema> {
             ASSIGN_OR_RETURN(const ActionSchema& schema,
                              self->GetSchema(action_name));
-            return std::shared_ptr<const ActionSchema>(
-                &schema, [](const ActionSchema*) {});
+            return schema;
           },
           py::arg("name"), py::return_value_policy::reference)
       .def("list_registered_actions",
@@ -325,10 +385,12 @@ void BindAction(py::handle scope, std::string_view name) {
                    [](const std::shared_ptr<Action>& other) { return other; }),
                py::keep_alive<0, 1>())
           .def(py::init([](ActionSchema schema, std::string_view id = "") {
-            auto action = std::make_shared<Action>(id);
-            action->set_schema(std::move(schema));
-            return action;
-          }));
+                 auto action = std::make_shared<Action>(
+                     !id.empty() ? id : GenerateUUID4());
+                 action->set_schema(std::move(schema));
+                 return action;
+               }),
+               py::arg(), py::arg_v("id", ""));
   cls.def(
          "run",
          [](const std::shared_ptr<Action>& action,
@@ -405,8 +467,15 @@ void BindAction(py::handle scope, std::string_view name) {
           py::arg("headers") = py::none())
       .def(
           "wait_until_complete",
-          [](const std::shared_ptr<Action>& action) { return action->Await(); },
-          py::call_guard<py::gil_scoped_release>())
+          [](const std::shared_ptr<Action>& action, double timeout = -1.0) {
+            absl::Duration timeout_duration = absl::InfiniteDuration();
+            if (timeout >= 0.0) {
+              timeout_duration = absl::Seconds(timeout);
+            }
+            bool timeout_occurred = false;
+            return action->Await(timeout_duration, &timeout_occurred);
+          },
+          py::call_guard<py::gil_scoped_release>(), py::arg_v("timeout", -1.0))
       .def(
           "clear_inputs_after_run",
           [](const std::shared_ptr<Action>& self, bool clear) {
@@ -513,6 +582,11 @@ void BindAction(py::handle scope, std::string_view name) {
             self->mutable_bound_resources()->set_node_map(std::move(node_map));
           },
           py::arg("node_map"))
+      .def("bind_registry",
+           [](const std::shared_ptr<Action>& self,
+              const std::shared_ptr<ActionRegistry>& registry) {
+             self->mutable_bound_resources()->set_registry(registry);
+           })
       .def("headers",
            [](const std::shared_ptr<Action>& self) {
              return py::make_key_iterator(self->headers().begin(),
@@ -565,6 +639,14 @@ void BindAction(py::handle scope, std::string_view name) {
             return absl::OkStatus();
           },
           py::arg("key"), py::arg("value"))
+      .def("_task_group",
+           [](const std::shared_ptr<Action>& self) -> py::object {
+             if (!self->HasBeenRun()) {
+               return py::none();
+             }
+             const auto user_data = EnsurePyUserData(self.get());
+             return user_data->task_group;
+           })
       .def(
           "remove_header",
           [](const std::shared_ptr<Action>& self, std::string_view key) {
@@ -577,6 +659,7 @@ py::module_ MakeActionsModule(py::module_ scope, std::string_view module_name) {
   py::module_ actions = scope.def_submodule(std::string(module_name).c_str(),
                                             "ActionEngine Actions interface.");
 
+  BindActionSchemaPort(actions, "ActionSchemaPort");
   BindActionSchema(actions, "ActionSchema");
   BindActionRegistry(actions, "ActionRegistry");
   BindAction(actions, "Action");

@@ -19,6 +19,7 @@ import json
 import threading
 from typing import Any
 
+import ormsgpack
 from actionengine import _C
 from actionengine import status
 from actionengine import pydantic_helpers
@@ -42,35 +43,35 @@ class SerializerRegistry(_C.data.SerializerRegistry):
 
 
 def to_bytes(
-        obj: Any,
-        mimetype: str = "",
-        registry: SerializerRegistry = None,
+    obj: Any,
+    mimetype: str = "",
+    registry: SerializerRegistry = None,
 ) -> bytes:
     return _C.data.to_bytes(obj, mimetype, registry)
 
 
 def to_chunk(
-        obj: Any,
-        mimetype: str = "",
-        registry: SerializerRegistry = None,
+    obj: Any,
+    mimetype: str = "",
+    registry: SerializerRegistry = None,
 ) -> Chunk:
     if isinstance(obj, NodeFragment) and mimetype in (
-            "",
-            "__act:NodeFragment__",
+        "",
+        "__act:NodeFragment__",
     ):
         return _C.data.to_chunk(obj)
     if isinstance(obj, status.Status) and mimetype in (
-            "",
-            "__status__",
+        "",
+        "__status__",
     ):
         return _C.data.to_chunk(obj)
     return _C.data.to_chunk(obj, mimetype, registry)
 
 
 def from_chunk(
-        chunk: Chunk,
-        mimetype: str = "",
-        registry: SerializerRegistry | None = None,
+    chunk: Chunk,
+    mimetype: str = "",
+    registry: SerializerRegistry | None = None,
 ) -> bytes:
     return _C.data.from_chunk(chunk, mimetype, registry)
 
@@ -109,6 +110,14 @@ def bytes_to_dict(value: bytes) -> dict:
     return json.loads(value.decode("utf-8"))
 
 
+def msgpack_to_bytes(value: dict) -> bytes:
+    return ormsgpack.packb(value)
+
+
+def msgpack_bytes_to_dict(value: bytes) -> dict:
+    return ormsgpack.unpackb(value)
+
+
 _DEFAULT_SERIALIZERS_REGISTERED = False
 
 
@@ -122,6 +131,11 @@ def _register_default_serializers():
     )
     registry.register_deserializer(
         "image/png", png_file_bytes_to_pil_image, Image.Image
+    )
+
+    registry.register_serializer("application/x-msgpack", msgpack_to_bytes)
+    registry.register_deserializer(
+        "application/x-msgpack", msgpack_bytes_to_dict, dict
     )
 
     registry.register_serializer("application/json", dict_to_bytes)

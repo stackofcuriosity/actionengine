@@ -8,8 +8,7 @@ from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from .http import ActionEngineClient, fragment_to_json
-
+from .http_utils import ActionEngineClient, fragment_to_json
 
 TTL = 120  # Time to live for Redis keys in seconds
 MAX_READ_TIMEOUT_SECONDS = 300  # Maximum read timeout in seconds

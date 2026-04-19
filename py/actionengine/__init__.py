@@ -31,9 +31,11 @@ from actionengine import utils
 from actionengine import webrtc
 from actionengine import websockets
 from actionengine import _C
+from actionengine.sdk import llm_tool
 
 Action = actions.Action
 ActionSchema = actions.ActionSchema
+ActionSchemaPort = actions.ActionSchemaPort
 ActionMessage = data.ActionMessage
 ActionRegistry = actions.ActionRegistry
 
@@ -68,8 +70,10 @@ get_global_act_settings = global_settings.get_global_act_settings
 
 buffer_wire_messages = eg_stream.buffer_wire_messages
 
+LLMTool = llm_tool.LLMTool
+
 
 def run_threadsafe_if_coroutine(
-        function_call_result, loop: asyncio.AbstractEventLoop | None = None
+    function_call_result, loop: asyncio.AbstractEventLoop | None = None
 ) -> Any:
     return _C.run_threadsafe_if_coroutine(function_call_result, loop)

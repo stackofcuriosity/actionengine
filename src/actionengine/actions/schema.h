@@ -51,7 +51,16 @@ namespace act {
 using ActionHandler = std::function<absl::Status(std::shared_ptr<Action>)>;
 
 using NameAndMimetype = std::pair<std::string, std::string>;
-using NameToMimetype = absl::flat_hash_map<std::string, std::string>;
+
+struct ActionSchemaPort {
+  std::string name;
+  std::string type;
+  std::string description;
+  bool required = false;
+
+  // TBD for reliable preservation of Python typing
+  std::optional<std::string> extra_type_info;
+};
 
 /** A schema for an action.
  *
@@ -95,7 +104,7 @@ struct ActionSchema {
    * message, and the mimetypes are used to specify the type of data that is
    * expected for each input.
    */
-  NameToMimetype inputs;
+  absl::flat_hash_map<std::string, ActionSchemaPort> inputs;
 
   /** A mapping of output names to their mimetypes.
    *
@@ -103,7 +112,7 @@ struct ActionSchema {
    * message, and the mimetypes are used to specify the type of data that is
    * produced by the action for a given output.
    */
-  NameToMimetype outputs;
+  absl::flat_hash_map<std::string, ActionSchemaPort> outputs;
 
   /** A description of the action. */
   std::string description;
@@ -121,7 +130,7 @@ constexpr std::string_view kListActionsDescription =
 const ActionSchema kListActionsSchema = {
     .name = "__list_actions",
     .inputs = {},
-    .outputs = {{"actions", "application/json"}},
+    .outputs = {{"actions", {"actions", "application/json"}}},
     .description = std::string(kListActionsDescription),
 };
 
@@ -130,14 +139,14 @@ template <typename Sink>
 void AbslStringify(Sink& sink, const ActionSchema& schema) {
   std::vector<std::string> input_reprs;
   input_reprs.reserve(schema.inputs.size());
-  for (const auto& [name, type] : schema.inputs) {
-    input_reprs.push_back(absl::StrCat(name, ":", type));
+  for (const auto& [name, port] : schema.inputs) {
+    input_reprs.push_back(absl::StrCat(name, ":", port.type));
   }
 
   std::vector<std::string> output_reprs;
   output_reprs.reserve(schema.outputs.size());
-  for (const auto& [name, type] : schema.outputs) {
-    output_reprs.push_back(absl::StrCat(name, ":", type));
+  for (const auto& [name, port] : schema.outputs) {
+    output_reprs.push_back(absl::StrCat(name, ":", port.type));
   }
 
   absl::Format(&sink, "ActionSchema{name: %s, inputs: %s, outputs: %s}",

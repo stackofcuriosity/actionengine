@@ -13,9 +13,9 @@ def make_action_registry():
 
     registry.register("echo", actions.echo.SCHEMA, actions.echo.run)
     registry.register(
-        "rehydrate_session",
-        actions.gemini.REHYDRATE_SESSION_SCHEMA,
-        actions.gemini.run_rehydrate_session,
+        "rehydrate_interaction",
+        actionengine.sdk.rehydrate_interaction.REHYDRATE_INTERACTION_SCHEMA,
+        actionengine.sdk.interaction.rehydrate_interaction,
     )
     registry.register(
         "infer_updated_facts",
@@ -23,9 +23,24 @@ def make_action_registry():
         actions.memory.infer_updated_facts,
     )
     registry.register(
+        "generate_content_claude",
+        actionengine.sdk.anthropic.generate_content_claude.GENERATE_CONTENT_CLAUDE_SCHEMA,
+        actionengine.sdk.anthropic.generate_content_claude_handler.generate_content_claude,
+    )
+    registry.register(
+        "generate_content_gemini",
+        actionengine.sdk.google.generate_content_gemini.GENERATE_CONTENT_GEMINI_SCHEMA,
+        actionengine.sdk.google.generate_content_gemini_handler.generate_content_gemini,
+    )
+    registry.register(
+        "generate_content_ollama",
+        actionengine.sdk.ollama.generate_content_ollama.GENERATE_CONTENT_OLLAMA_SCHEMA,
+        actionengine.sdk.ollama.generate_content_ollama_handler.generate_content_ollama,
+    )
+    registry.register(
         "generate_content",
-        actions.gemini.GENERATE_CONTENT_SCHEMA,
-        actions.gemini.generate_content,
+        actionengine.sdk.llm.generate_content.GENERATE_CONTENT_SCHEMA,
+        actionengine.sdk.llm.generate_content_handler.generate_content,
     )
     registry.register(
         "text_to_image", actions.text_to_image.SCHEMA, actions.text_to_image.run
@@ -50,6 +65,9 @@ def make_action_registry():
     actions.deep_research.register_deep_research_actions(registry)
 
     return registry
+
+
+REGISTRY = make_action_registry()
 
 
 def setup_action_engine():

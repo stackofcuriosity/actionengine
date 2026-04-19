@@ -38,6 +38,8 @@ using Service = act::Service;
 using Session = act::Session;
 using WireStream = act::WireStream;
 
+constexpr std::string_view kSignallingUrl = "wss://actionengine.dev:19001";
+
 // Server side implementation of the echo action. This is a simple example of
 // how to implement an action handler. Every handler must take a shared_ptr to
 // the Action object as an argument. This object provides accessors to input and
@@ -191,11 +193,10 @@ absl::Status Main(int argc, char** argv) {
   act::net::RtcConfig rtc_config;
   rtc_config.preferred_port_range = {absl::GetFlag(FLAGS_port),
                                      absl::GetFlag(FLAGS_port)};
-  act::net::WebRtcServer server(
-      &service, "127.0.0.1",
-      /*signalling_identity=*/"echo-server-1",
-      /*signalling_url=*/"wss://actionengine.dev:19001",
-      /*rtc_config=*/std::move(rtc_config));
+  act::net::WebRtcServer server(&service, "127.0.0.1",
+                                /*signalling_identity=*/"echo-server-1",
+                                /*signalling_url=*/kSignallingUrl,
+                                /*rtc_config=*/std::move(rtc_config));
   server.Run();
   absl::SleepFor(absl::Seconds(1));
 
@@ -208,10 +209,9 @@ absl::Status Main(int argc, char** argv) {
   session.set_node_map(&node_map);
   std::string identity = act::GenerateUUID4();
   LOG(INFO) << "Identity: " << identity;
-  ASSIGN_OR_RETURN(
-      std::shared_ptr<act::WireStream> stream,
-      act::net::StartStreamWithSignalling(identity, "echo-server-1",
-                                          "wss://actionengine.dev:19001"));
+  ASSIGN_OR_RETURN(std::shared_ptr<act::WireStream> stream,
+                   act::net::StartStreamWithSignalling(
+                       identity, "echo-server-1", kSignallingUrl));
 
   session.StartStreamHandler(identity, stream);
 
