@@ -84,7 +84,7 @@ class AsyncNode(_C.nodes.AsyncNode):
             "readers_deserialise_automatically",
         )
 
-    def _consume_sync(
+    def consume_sync(
         self, timeout: float = -1.0, allow_none: bool = False
     ) -> Any:
         item = self.next_sync(timeout)
@@ -100,16 +100,22 @@ class AsyncNode(_C.nodes.AsyncNode):
             )
         return item
 
-    def consume(
+    async def consume(
         self, timeout: float = -1.0, allow_none: bool = False
-    ) -> Any | Awaitable[Any]:
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            return self._consume_sync(timeout, allow_none)
-        return asyncio.create_task(
-            asyncio.to_thread(self._consume_sync, timeout, allow_none)
-        )
+    ) -> Any:
+        chunk = await self.next_chunk(timeout)
+        if chunk is None:
+            if allow_none:
+                return None
+            raise RuntimeError(
+                "Node is empty while expecting exactly one item."
+            )
+        if await self.next_chunk(timeout) is not None:
+            raise RuntimeError(
+                "Node has more than one item while expecting exactly one."
+            )
+        item = await asyncio.to_thread(data.from_chunk, chunk)
+        return item
 
     async def next(self, timeout: float = -1.0):
         if self.deserialize:
@@ -125,9 +131,7 @@ class AsyncNode(_C.nodes.AsyncNode):
 
     async def next_object(self, timeout: float = -1.0) -> Any:
         """Returns the next object in the store, or None if the store is empty."""
-        return await asyncio.create_task(
-            asyncio.to_thread(self.next_object_sync, timeout)
-        )
+        return await asyncio.to_thread(self.next_object_sync, timeout)
 
     def next_object_sync(self, timeout: float = -1.0) -> Any:
         """Returns the next object in the store, or None if the store is empty."""
@@ -140,10 +144,14 @@ class AsyncNode(_C.nodes.AsyncNode):
             registry=self._serializer_registry,
         )
 
-    async def next_chunk(self, timeout: float = -1.0) -> Optional[Chunk]:
-        return await asyncio.create_task(
-            asyncio.to_thread(self.next_chunk_sync, timeout)
-        )
+    async def next_chunk(
+        self,
+        timeout: float = -1.0,
+        future: asyncio.Future[Optional[Chunk]] = None,
+    ) -> Optional[Chunk]:
+        future = future or asyncio.get_running_loop().create_future()
+        _C.nodes.AsyncNode.next_chunk(self, timeout, future)
+        return await future
 
     def next_chunk_sync(self, timeout: float = -1.0) -> Optional[Chunk]:
         return _C.nodes.AsyncNode.next_chunk(
@@ -151,10 +159,14 @@ class AsyncNode(_C.nodes.AsyncNode):
         )  # pytype: disable=attribute-error
 
     async def next_fragment(
-        self, timeout: float = -1.0
+        self,
+        timeout: float = -1.0,
+        future: asyncio.Future[Optional[Chunk]] = None,
     ) -> Optional[NodeFragment]:
         """Returns the next fragment in the store, or None if the store is empty."""
-        return await asyncio.to_thread(self.next_fragment_sync, timeout)
+        future = future or asyncio.get_running_loop().create_future()
+        _C.nodes.AsyncNode.next_fragment(self, timeout, future)
+        return await future
 
     def next_fragment_sync(
         self, timeout: float = -1.0
@@ -367,9 +379,8 @@ class AsyncNode(_C.nodes.AsyncNode):
             chunk = await self.next_chunk()
             while chunk is not None and utils.is_null_chunk(chunk):
                 chunk = await self.next_chunk()
-        except asyncio.CancelledError as exc:
-            print("AsyncNode.__anext__: CancelledError")
-            raise StopAsyncIteration() from exc
+        except asyncio.CancelledError:
+            raise
 
         if chunk is None:
             raise StopAsyncIteration()

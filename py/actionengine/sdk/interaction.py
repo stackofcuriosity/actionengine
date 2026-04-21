@@ -14,15 +14,15 @@
 
 import asyncio
 import base64
-import logging
 import os
 
 from actionengine import redis as ae_redis
 from actionengine.actions import Action
 from actionengine.data import Chunk, ChunkMetadata
+from actionengine.logging import get_logger
 from pydantic import BaseModel
 
-_LOGGER = logging.getLogger(__name__)
+_LOGGER = get_logger().getChild("sdk.interaction")
 
 
 def _get_redis_client():

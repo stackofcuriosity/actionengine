@@ -272,9 +272,12 @@ class Action(_C.actions.Action):
         """Calls the action and waits for the dispatch status synchronously."""
         super().call_and_wait_for_dispatch_status(wire_message_headers)
 
-    def get_registry(self) -> ActionRegistry:
+    def get_registry(self) -> ActionRegistry | None:
         """Returns the action registry from attached session."""
-        return utils.wrap_pybind_object(ActionRegistry, super().get_registry())
+        registry = super().get_registry()
+        if registry is None:
+            return None
+        return utils.wrap_pybind_object(ActionRegistry, registry)
 
     # pylint: disable-next=[useless-parent-delegation]
     def get_stream(self) -> _C.service.WireStream:

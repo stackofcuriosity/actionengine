@@ -13,11 +13,15 @@
 # limitations under the License.
 
 import asyncio
-from typing import Any
+import logging
 
 from actionengine import actions
+from actionengine import async_node
 from actionengine import data
+from actionengine.logging import get_logger
 from actionengine.sdk import llm_tool
+
+_LOGGER = get_logger()
 
 TOOL_RUNNER_SCHEMA = actions.ActionSchema(
     name="__handle_tool_calls",
@@ -42,20 +46,37 @@ TOOL_RUNNER_SCHEMA = actions.ActionSchema(
 async def _run_tool(
     tools: dict[str, llm_tool.LLMTool],
     input_dict_chunk: data.Chunk,
-    result_dict: dict[int, Any],
+    output_node: async_node.AsyncNode,
     result_idx: int,
 ):
-    input_dict = await asyncio.to_thread(
-        input_dict_chunk.deserialize, "application/json"
-    )
-    if not isinstance(input_dict, dict):
-        raise ValueError("Input dict chunk did not contain a valid JSON.")
+    try:
+        input_dict = await asyncio.to_thread(
+            input_dict_chunk.deserialize, "application/json"
+        )
+        if not isinstance(input_dict, dict):
+            raise ValueError("Input dict chunk did not contain a valid JSON.")
 
-    tool = tools[input_dict["name"]]
-    result = await tool.run(input_dict["params"])
-    if result is None:
-        raise ValueError(f"Tool {input_dict['name']} returned None.")
-    result_dict[result_idx] = result
+        tool = tools[input_dict["name"]]
+        _LOGGER.info(f"{input_dict["id"]} {input_dict['name']}")
+
+        result = await tool.run(input_dict["params"])
+        if result is None:
+            raise ValueError(f"Tool {input_dict['name']} returned None.")
+    except Exception as exc:
+        await output_node.put(
+            {
+                "__error__": True,
+                "error": str(exc.with_traceback(None)).splitlines()[0],
+            },
+            seq=result_idx,
+            mimetype="application/json",
+        )
+    else:
+        await output_node.put(
+            result,
+            seq=result_idx,
+            mimetype="application/json",
+        )
 
 
 def make_llm_tool_runner(tools: dict[str, llm_tool.LLMTool]):
@@ -64,31 +85,29 @@ def make_llm_tool_runner(tools: dict[str, llm_tool.LLMTool]):
     #       "stream/unstream" helper
 
     async def _runner(action: actions.Action):
-        result_dict = dict()
-        tasks = []
+        try:
+            tasks = []
 
-        # start all tools as soon as possible, but preserve call order
-        tool_call_idx = 0
-        while True:
-            chunk: data.Chunk | None = await action["calls"].next_chunk()
-            if chunk is None:
-                break
-            tasks.append(
-                asyncio.create_task(
-                    _run_tool(tools, chunk, result_dict, tool_call_idx)
+            # start all tools as soon as possible, but preserve call order
+            tool_call_idx = 0
+            while True:
+                chunk: data.Chunk | None = await action["calls"].next_chunk()
+                if chunk is None:
+                    break
+                tasks.append(
+                    asyncio.create_task(
+                        _run_tool(
+                            tools, chunk, action["outputs"], tool_call_idx
+                        )
+                    )
                 )
-            )
-            tool_call_idx += 1
+                if tool_call_idx == 0:
+                    await asyncio.sleep(0.05)
+                tool_call_idx += 1
 
-        # await results from parallel runs, sending them back in order
-        for idx, task in enumerate(tasks):
-            await task
-            await action["outputs"].put(
-                result_dict[idx],
-                mimetype="application/json",
-            )
-
-        await action["outputs"].finalize()
+            await asyncio.gather(*tasks)
+        finally:
+            await action["outputs"].finalize()
 
     return _runner
 

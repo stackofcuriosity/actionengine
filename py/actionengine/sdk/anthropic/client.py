@@ -30,6 +30,8 @@ def get_anthropic_client(api_key: str | None = None) -> AsyncAnthropic:
     api_key_hash = hashlib.sha256(api_key.encode()).hexdigest()
 
     if api_key_hash not in get_anthropic_client._clients:
-        get_anthropic_client._clients[api_key_hash] = AsyncAnthropic()
+        get_anthropic_client._clients[api_key_hash] = AsyncAnthropic(
+            api_key=api_key
+        )
 
     return get_anthropic_client._clients[api_key_hash]
