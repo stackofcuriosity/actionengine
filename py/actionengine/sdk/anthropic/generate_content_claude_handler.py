@@ -15,7 +15,6 @@
 import asyncio
 import base64
 import json
-import logging
 import os
 
 import anthropic
@@ -102,7 +101,7 @@ async def generate_content_claude(
                     thinking = {"type": "adaptive"}
 
                 output_config = {"effort": "medium"}
-                if "haiku" in config.model:
+                if "haiku" in config.model or "4-5" not in config.model:
                     output_config = anthropic.Omit()
 
                 stream = await client.messages.create(
@@ -221,7 +220,7 @@ async def generate_content_claude(
                         log_line += (
                             f" \x1b[38;5;242m{tool_call['params']}\x1b[0m"
                         )
-                    _LOGGER.debug(log_line)
+                    _LOGGER.info(log_line)
                     await run_tools["calls"].put(tool_call)
                 await run_tools["calls"].finalize()
 
@@ -232,7 +231,7 @@ async def generate_content_claude(
 
                 call_idx = 0
                 async for output in run_tools["outputs"]:
-                    _LOGGER.debug(
+                    _LOGGER.info(
                         f"\x1b[33;20m{tool_calls[call_idx]['name']} {tool_calls[call_idx]['id']}\x1b[0m"
                     )
 
@@ -248,14 +247,6 @@ async def generate_content_claude(
                     if not tool_output_display:
                         if tool_calls[call_idx]["name"] == "sqlite_select":
                             for row in output:
-                                # if isinstance(row, (tuple, list)):
-                                #     tool_output_display += (
-                                #         ",".join(
-                                #             (str(element) for element in row)
-                                #         )
-                                #         + "\n"
-                                #     )
-                                # else:
                                 tool_output_display += str(row) + "\n"
                         else:
                             tool_output_display += str(output)
@@ -266,7 +257,7 @@ async def generate_content_claude(
                     tool_output_display = (
                         f"\x1b[38;5;242m{tool_output_display}\x1b[0m\n"
                     )
-                    _LOGGER.debug(tool_output_display)
+                    _LOGGER.info(tool_output_display)
 
                     if is_error:
                         tool_result_content = output.get("error", "")
