@@ -45,7 +45,7 @@ class WorkerThreadPool {
 
   static WorkerThreadPool& Instance();
 
-  boost::context::pooled_fixedsize_stack& Allocator() { return alloc; }
+  boost::context::protected_fixedsize_stack& Allocator() { return alloc; }
 
  private:
   struct Worker {
@@ -54,7 +54,7 @@ class WorkerThreadPool {
 
   static constexpr bool kScheduleOnSelf = true;
 
-  boost::context::pooled_fixedsize_stack alloc;
+  boost::context::protected_fixedsize_stack alloc;
 
   act::concurrency::impl::Mutex mu_{};
   std::atomic<size_t> worker_idx_{0};
