@@ -4,6 +4,32 @@ import logging
 import os
 
 import actionengine
+from actionengine.sdk import interaction, rehydrate_interaction
+from actionengine.sdk.anthropic.generate_content_claude import (
+    GENERATE_CONTENT_CLAUDE_SCHEMA,
+)
+from actionengine.sdk.anthropic.generate_content_claude_handler import (
+    generate_content_claude,
+)
+from actionengine.sdk.google.generate_content_gemini import (
+    GENERATE_CONTENT_GEMINI_SCHEMA,
+)
+from actionengine.sdk.google.generate_content_gemini_handler import (
+    generate_content_gemini,
+)
+from actionengine.sdk.llm.generate_content import (
+    GENERATE_CONTENT_SCHEMA,
+)
+from actionengine.sdk.llm.generate_content_handler import (
+    generate_content,
+)
+from actionengine.sdk.ollama.generate_content_ollama import (
+    GENERATE_CONTENT_OLLAMA_SCHEMA,
+)
+from actionengine.sdk.ollama.generate_content_ollama_handler import (
+    generate_content_ollama,
+)
+
 
 import actions
 
@@ -14,8 +40,8 @@ def make_action_registry():
     registry.register("echo", actions.echo.SCHEMA, actions.echo.run)
     registry.register(
         "rehydrate_interaction",
-        actionengine.sdk.rehydrate_interaction.REHYDRATE_INTERACTION_SCHEMA,
-        actionengine.sdk.interaction.rehydrate_interaction,
+        rehydrate_interaction.REHYDRATE_INTERACTION_SCHEMA,
+        interaction.rehydrate_interaction,
     )
     registry.register(
         "infer_updated_facts",
@@ -24,23 +50,23 @@ def make_action_registry():
     )
     registry.register(
         "generate_content_claude",
-        actionengine.sdk.anthropic.generate_content_claude.GENERATE_CONTENT_CLAUDE_SCHEMA,
-        actionengine.sdk.anthropic.generate_content_claude_handler.generate_content_claude,
+        GENERATE_CONTENT_CLAUDE_SCHEMA,
+        generate_content_claude,
     )
     registry.register(
         "generate_content_gemini",
-        actionengine.sdk.google.generate_content_gemini.GENERATE_CONTENT_GEMINI_SCHEMA,
-        actionengine.sdk.google.generate_content_gemini_handler.generate_content_gemini,
+        GENERATE_CONTENT_GEMINI_SCHEMA,
+        generate_content_gemini,
     )
     registry.register(
         "generate_content_ollama",
-        actionengine.sdk.ollama.generate_content_ollama.GENERATE_CONTENT_OLLAMA_SCHEMA,
-        actionengine.sdk.ollama.generate_content_ollama_handler.generate_content_ollama,
+        GENERATE_CONTENT_OLLAMA_SCHEMA,
+        generate_content_ollama,
     )
     registry.register(
         "generate_content",
-        actionengine.sdk.llm.generate_content.GENERATE_CONTENT_SCHEMA,
-        actionengine.sdk.llm.generate_content_handler.generate_content,
+        GENERATE_CONTENT_SCHEMA,
+        generate_content,
     )
     registry.register(
         "text_to_image", actions.text_to_image.SCHEMA, actions.text_to_image.run

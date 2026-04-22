@@ -22,6 +22,7 @@ target_link_libraries(
         actActions PRIVATE
         act::util::boost_json
         absl::base
+        absl::flat_hash_map
         absl::log
         absl::log_internal_check_op
         absl::status
@@ -61,6 +62,7 @@ target_link_libraries(
 )
 target_link_libraries(
         actActionsPybind11 PRIVATE
+        absl::flat_hash_map
         absl::log
         ${ACTIONENGINE_PYBIND11_DEPENDENCIES}
 )

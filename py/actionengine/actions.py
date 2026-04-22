@@ -46,6 +46,9 @@ def wrap_handler(handler: ActionHandler) -> ActionHandler:
 
         def inner(action: "Action") -> None:
             """Inner function to wrap the handler."""
+            if action is None:
+                raise RuntimeError("Action supplied to handler cannot be None.")
+
             return handler(utils.wrap_pybind_object(Action, action))
 
         return inner
@@ -53,46 +56,30 @@ def wrap_handler(handler: ActionHandler) -> ActionHandler:
 
         async def inner(action: "Action") -> None:
             """Inner function to wrap the async handler."""
+            if action is None:
+                raise RuntimeError("Action supplied to handler cannot be None.")
             py_action = utils.wrap_pybind_object(Action, action)
             await handler(py_action)
 
         return inner
 
 
-class ActionSchemaPort(_C.actions.ActionSchemaPort):
-    def __init__(
-        self,
-        name: str,
-        port_type: str | type[BaseModel],
-        description: str = "",
-        required: bool = False,
-    ):
-        """Constructor for ActionSchemaPort.
-
-        Args:
-          name: The name of the action port.
-          port_type: The type of the action port.
-          description: The description of the action port.
-          required: Whether the action port is required.
-        """
-        self._py_type = port_type
-        if isinstance(port_type, type) and issubclass(port_type, BaseModel):
-            self._py_type = port_type
-            port_type = "__BaseModel__"
-
-        super().__init__(name, port_type, description, required)
+ActionSchemaPort = _C.actions.ActionSchemaPort
 
 
 class ActionSchema(_C.actions.ActionSchema):
     """A schema of an ActionEngine Action."""
+
+    _NameAndType = tuple[str, str | type[BaseModel]]
+    _NameTypeAndDescription = tuple[str, str | type[BaseModel], str]
 
     # pylint: disable-next=[useless-parent-delegation]
     def __init__(
         self,
         *,
         name: str = "",
-        inputs: list[tuple[str, str | type[BaseModel]]],
-        outputs: list[tuple[str, str | type[BaseModel]]],
+        inputs: list[_NameAndType | _NameTypeAndDescription],
+        outputs: list[_NameAndType | _NameTypeAndDescription],
         description: str = "",
     ):
         """Constructor for ActionSchema.
@@ -108,25 +95,37 @@ class ActionSchema(_C.actions.ActionSchema):
         input_ports = []
         output_ports = []
 
-        for input_port_or_tuple in inputs:
-            if isinstance(input_port_or_tuple, tuple):
-                input_name, input_type = input_port_or_tuple
-                self._py_inputs[input_name] = input_type
-                input_port = ActionSchemaPort(input_name, input_type)
+        for input_tuple in inputs:
+            if len(input_tuple) == 2:
+                input_name, input_type = input_tuple
+                description = ""
             else:
-                input_port: ActionSchemaPort = input_port_or_tuple
-                self._py_inputs[input_port.name] = input_port._py_type
-            input_ports.append(input_port)
+                input_name, input_type, description = input_tuple
 
-        for output_port_or_tuple in outputs:
-            if isinstance(output_port_or_tuple, tuple):
-                output_name, output_type = output_port_or_tuple
-                self._py_outputs[output_name] = output_type
-                output_port = ActionSchemaPort(output_name, output_type)
+            self._py_inputs[input_name] = input_type
+            if isinstance(input_type, type) and issubclass(
+                input_type, BaseModel
+            ):
+                input_type = "__BaseModel__"
+            input_ports.append(
+                ActionSchemaPort(input_name, input_type, description)
+            )
+
+        for output_tuple in outputs:
+            if len(output_tuple) == 2:
+                output_name, output_type = output_tuple
+                description = ""
             else:
-                output_port: ActionSchemaPort = output_port_or_tuple
-                self._py_outputs[output_port.name] = output_port._py_type
-            output_ports.append(output_port)
+                output_name, output_type, description = output_tuple
+
+            self._py_outputs[output_name] = output_type
+            if isinstance(output_type, type) and issubclass(
+                output_type, BaseModel
+            ):
+                output_type = "__BaseModel__"
+            output_ports.append(
+                ActionSchemaPort(output_name, output_type, description)
+            )
 
         super().__init__(
             name=name,
@@ -304,10 +303,10 @@ class Action(_C.actions.Action):
             the action is called (client-side), and to output nodes if the action is
             run (server-side).
         """
-        return utils.wrap_pybind_object(
-            AsyncNode,
-            super().get_input(name, bind_stream),
-        )
+        input_node = super().get_input(name, bind_stream)
+        if input_node is None:
+            raise KeyError(f"Input node with name {name} not found.")
+        return utils.wrap_pybind_object(AsyncNode, input_node)
 
     def get_output(
         self, name: str, bind_stream: bool | None = None
@@ -323,21 +322,20 @@ class Action(_C.actions.Action):
             nodes if the action is run (server-side), and to input nodes if the
             action is called (client-side).
         """
-        return utils.wrap_pybind_object(
-            AsyncNode,
-            super().get_output(name, bind_stream),
-        )
+        output = super().get_output(name, bind_stream)
+        if output is None:
+            raise KeyError(f"Output node with name {name} not found.")
+        return utils.wrap_pybind_object(AsyncNode, output)
 
     def __getitem__(self, name: str) -> AsyncNode:
         """Returns the node with the given name."""
         node = None
-
         schema = self.get_schema()
-        for param in schema.inputs:
+        for param in schema.inputs():
             if param == name:
                 node = self.get_input(name)
                 break
-        for param in schema.outputs:
+        for param in schema.outputs():
             if param == name:
                 node = self.get_output(name)
                 break

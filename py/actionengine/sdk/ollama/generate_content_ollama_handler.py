@@ -25,6 +25,11 @@ from actionengine.sdk.rehydrate_interaction import REHYDRATE_INTERACTION_SCHEMA
 
 
 async def generate_content_ollama(action: Action):
+    # skip these inputs
+    await action["config"].consume(allow_none=True)
+    async for _ in action["tools"]:
+        pass
+
     interaction_token = await action["interaction_token"].consume()
     interaction_id, next_output_seq, next_thought_seq = (
         await interaction.resolve_token_to_id_and_seqs(interaction_token)

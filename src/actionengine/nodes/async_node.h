@@ -91,7 +91,7 @@ class AsyncNode {
   ~AsyncNode();
 
   /**
-   * Enqueues a chunk to be written to underlying chunk store.
+   * Enqueues a chunk to be written to the underlying chunk store.
    *
    * @param value
    *   The chunk to write to the store.

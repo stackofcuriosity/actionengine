@@ -31,8 +31,6 @@
 
 #include "actionengine/actions/schema.h"
 
-PYBIND11_MAKE_OPAQUE(absl::flat_hash_map<std::string, act::ActionSchemaPort>);
-
 namespace act::pybindings {
 
 namespace py = ::pybind11;

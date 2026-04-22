@@ -15,6 +15,7 @@
 import asyncio
 import base64
 import os
+from typing import Any
 
 from actionengine import redis as ae_redis
 from actionengine.actions import Action
@@ -196,4 +197,4 @@ async def save_turn(
 
 class Message(BaseModel):
     role: str
-    content: str
+    content: str | dict[str, Any]

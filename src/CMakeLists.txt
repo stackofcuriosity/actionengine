@@ -101,6 +101,7 @@ target_link_libraries(
         absl::base
         absl::flags
         absl::flags_parse
+        absl::flat_hash_map
         absl::log
         absl::log_internal_check_op
         absl::status

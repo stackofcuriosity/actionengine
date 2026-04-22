@@ -189,6 +189,9 @@ absl::StatusOr<thread::Case> ActionExecutionContext::OnDone() const {
     return call_state.dispatched->OnEvent();
   }
   auto& run_state = std::get<ActionRunState>(*progress_state_);
+  if (run_state.fiber == nullptr) {
+    return absl::FailedPreconditionError("Action fiber had been detached.");
+  }
   return run_state.fiber->OnJoinable();
 }
 
@@ -415,7 +418,10 @@ void ActionExecutionContext::ReleaseResourcesAfterRun_(
 
   if (Session* session = action->bound_resources().session();
       session != nullptr) {
-    session->ExtractAction(action->id()).IgnoreError();
+    if (const auto status = session->ExtractAction(action->id());
+        !status.ok()) {
+      DLOG(WARNING) << "Failed to extract action from session: " << status;
+    }
   }
 }
 
@@ -464,7 +470,11 @@ bool ActionExecutionContext::CancelledLocally_() const {
   if (!HasBeenRun_()) {
     return cancelled_;
   }
-  return std::get<ActionRunState>(*progress_state_).fiber->Cancelled();
+  const ActionRunState& run_state = std::get<ActionRunState>(*progress_state_);
+  if (run_state.fiber == nullptr) {
+    return cancelled_;
+  }
+  return run_state.fiber->Cancelled();
 }
 
 bool ActionExecutionContext::CancelledSuccessfullyOnRemote_() const {

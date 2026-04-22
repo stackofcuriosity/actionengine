@@ -27,14 +27,14 @@ TOOL_RUNNER_SCHEMA = actions.ActionSchema(
     name="__handle_tool_calls",
     description="Runs tools from input_dicts.",
     inputs=[
-        actions.ActionSchemaPort(
+        (
             "calls",
             "application/json",
             "Tool calls in the form of LLM-supplied dictionaries.",
         ),
     ],
     outputs=[
-        actions.ActionSchemaPort(
+        (
             "outputs",
             "application/json",
             "The results of the tool calls.",

@@ -42,6 +42,6 @@ GENERATE_CONTENT_GEMINI_SCHEMA = ActionSchema(
     outputs=[
         ("output", "text/plain"),
         ("thoughts", "text/plain"),
-        ("interaction_token", "text/plain"),
+        ("new_interaction_token", "text/plain"),
     ],
 )

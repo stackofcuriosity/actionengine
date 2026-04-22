@@ -31,7 +31,7 @@ import { useSearchParams } from 'next/navigation'
 import { ActionEngineContext, makeAction } from '@/helpers/actionengine'
 import {
   GENERATE_CONTENT_SCHEMA,
-  REHYDRATE_SESSION_SCHEMA,
+  REHYDRATE_INTERACTION_SCHEMA,
 } from '@/actions/chat'
 import { setChatMessagesFromAsyncNode } from '@/helpers/demoChats'
 
@@ -146,7 +146,7 @@ export default function Page() {
       return
     }
     actionRegistry.register('generate_content', GENERATE_CONTENT_SCHEMA)
-    actionRegistry.register('rehydrate_session', REHYDRATE_SESSION_SCHEMA)
+    actionRegistry.register('rehydrate_interaction', REHYDRATE_INTERACTION_SCHEMA)
     registerDeepResearchAction(actionRegistry)
   }, [actionEngine])
 

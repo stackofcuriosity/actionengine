@@ -102,26 +102,25 @@ async def generate_content(action: Action):
     )
     await generate["api_key"].put_and_finalize(api_key)
 
-    pending_tasks = set()
-    for proxy_output_coro in (
-        action["output"].copy_from(generate["output"]),
-        action["thoughts"].copy_from(generate["thoughts"]),
-        action["new_interaction_token"].copy_from(
-            generate["new_interaction_token"]
-        ),
-    ):
-        task = asyncio.create_task(proxy_output_coro)
-        pending_tasks.add(task)
-        task.add_done_callback(pending_tasks.discard)
+    async with asyncio.TaskGroup() as tg:
+        tg.create_task(action["output"].copy_from(generate["output"]))
+        tg.create_task(action["thoughts"].copy_from(generate["thoughts"]))
+        tg.create_task(
+            action["new_interaction_token"].copy_from(
+                generate["new_interaction_token"]
+            )
+        )
 
-    await asyncio.gather(
-        generate["chat_input"].copy_from(action["chat_input"]),
-        generate["system_instructions"].copy_from(
-            action["system_instructions"]
-        ),
-        generate["interaction_token"].copy_from(action["interaction_token"]),
-        generate["config"].copy_from(action["config"]),
-        generate["tools"].copy_from(action["tools"]),
-    )
+        tg.create_task(generate["chat_input"].copy_from(action["chat_input"]))
+        tg.create_task(
+            generate["system_instructions"].copy_from(
+                action["system_instructions"]
+            )
+        )
+        tg.create_task(
+            generate["interaction_token"].copy_from(action["interaction_token"])
+        )
+        tg.create_task(generate["config"].copy_from(action["config"]))
+        tg.create_task(generate["tools"].copy_from(action["tools"]))
 
     await generate.wait_until_complete()

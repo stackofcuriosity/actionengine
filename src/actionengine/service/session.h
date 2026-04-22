@@ -118,6 +118,12 @@ class ConnectionCtx {
 
 }  // namespace internal
 
+/**
+ * Represents a session for managing running actions and AsyncNodes (data
+ * streams).
+ *
+ * @headerfile actionengine/service/session.h
+ */
 class Session {
  public:
   friend class ActionExecutionContext;

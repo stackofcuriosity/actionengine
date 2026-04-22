@@ -554,7 +554,7 @@ export default function Page() {
                 <u>Chat with an LLM</u>
               </Link>
               &nbsp;seeing its thought process as a separate stream, retrieve
-              history later with a session token, and{' '}
+              history later with an interaction token, and{' '}
               <Link
                 href='https://github.com/JetBrains/actionengine/blob/main/examples/007-python-generative-media/actions/gemini.py'
                 className='text-blue-600'

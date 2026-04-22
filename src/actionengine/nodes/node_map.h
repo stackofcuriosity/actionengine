@@ -74,10 +74,29 @@ class NodeMap {
     }
   }
 
+  /**
+   * Retrieves an AsyncNode by its ID.
+   *
+   * If the node does not exist, it is created with the provided chunk
+   * store factory.
+   *
+   * @param id The ID of the AsyncNode to retrieve.
+   * @param chunk_store_factory Optional factory for creating chunk stores.
+   * @return A pointer to the AsyncNode.
+   */
   AsyncNode* absl_nonnull Get(
       std::string_view id, const ChunkStoreFactory& chunk_store_factory = {});
   std::shared_ptr<AsyncNode> Borrow(
       std::string_view id, const ChunkStoreFactory& chunk_store_factory = {});
+  /**
+   * Retrieves an AsyncNode by its ID.
+   *
+   * If the node does not exist, it is created with the default chunk
+   * store factory (the one set by the constructor).
+   *
+   * @param id The ID of the AsyncNode to retrieve.\
+   * @return A pointer to the AsyncNode.
+   */
   std::shared_ptr<AsyncNode> operator[](std::string_view id);
 
   [[nodiscard]] std::shared_ptr<AsyncNode> Extract(std::string_view id);

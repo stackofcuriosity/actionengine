@@ -56,74 +56,11 @@ struct PyUserData {
 
     py::object empty1;
     std::swap(future, empty1);
-
-    py::object empty2;
-    std::swap(lock, empty2);
-
-    py::object empty3;
-    std::swap(task_group, empty3);
-
-    obj_refs.clear();
   }
 
   Action* absl_nonnull action = nullptr;
   thread::PermanentEvent done;
   py::object future = py::none();
-  py::object lock = py::none();
-  py::object task_group = py::none();
-  std::vector<py::object> obj_refs;
-};
-
-class PyRaiiLock {
- public:
-  static absl::StatusOr<PyRaiiLock> FromExisting(py::handle lock) {
-    py::gil_scoped_acquire gil;
-    // if (!py::isinstance(lock, py::module::import("threading").attr("Lock"))) {
-    //   return absl::InvalidArgumentError("Expected a threading.Lock object.");
-    // }
-    return PyRaiiLock(lock);
-  }
-
-  PyRaiiLock() {
-    py::gil_scoped_acquire gil;
-    lock_ = py::module::import("threading").attr("Lock")();
-    CHECK_OK(lock());
-  }
-
-  ~PyRaiiLock() {
-    py::gil_scoped_acquire gil;
-    unlock().IgnoreError();
-    lock_ = py::none();
-  }
-
-  absl::Status lock() const {
-    py::gil_scoped_acquire gil;
-    try {
-      auto _ = lock_.attr("acquire")();
-    } catch (py::error_already_set& e) {
-      return absl::InternalError(absl::StrCat(e.what()));
-    }
-    return absl::OkStatus();
-  }
-
-  absl::Status unlock() const {
-    py::gil_scoped_acquire gil;
-    try {
-      auto _ = lock_.attr("release")();
-    } catch (py::error_already_set& e) {
-      return absl::InternalError(absl::StrCat(e.what()));
-    }
-    return absl::OkStatus();
-  }
-
- private:
-  explicit PyRaiiLock(py::handle lock_obj) {
-    py::gil_scoped_acquire gil;
-    lock_ = py::cast<py::object>(lock_obj);
-    CHECK_OK(lock());
-  }
-
-  py::object lock_;
 };
 
 static std::shared_ptr<PyUserData> EnsurePyUserData(
@@ -137,8 +74,6 @@ static std::shared_ptr<PyUserData> EnsurePyUserData(
   auto user_data = std::make_shared<PyUserData>();
   user_data->action = action;
   user_data->future = GetGloballySavedEventLoop().attr("create_future")();
-  user_data->lock = py::module::import("threading").attr("Lock")();
-  user_data->task_group = py::module::import("asyncio").attr("TaskGroup")();
   action->SetUserData("_py_user_data", user_data);
   return user_data;
 }
@@ -160,75 +95,76 @@ absl::StatusOr<ActionHandler> MakeSimpleActionHandler(py::handle py_handler) {
 
   return [py_handler](const std::shared_ptr<Action>& action) -> absl::Status {
     std::shared_ptr<PyUserData> user_data = EnsurePyUserData(action.get());
-    py::gil_scoped_acquire gil;
 
     absl::Status status;
-    try {
-      absl::StatusOr<py::object> future = RunThreadsafeIfCoroutine(
+    py::object future;
+
+    {
+      py::gil_scoped_acquire gil;
+      absl::StatusOr<py::object> future_or = RunThreadsafeIfCoroutine(
           py_handler(action), GetGloballySavedEventLoop(),
           /*return_future=*/true);
-
-      if (!future.ok()) {
-        status = future.status();
+      if (!future_or.ok()) {
+        status = future_or.status();
       } else {
-        std::swap(*future, user_data->future);
-        future->release().dec_ref();
-        py::handle future_handle = user_data->future;
-        action->SetOnCancelled([future_handle]() {
-          py::gil_scoped_acquire gil;
-          auto _ = future_handle.attr("cancel")();
-        });
-        auto on_python_cancel = py::cpp_function([user_data](py::handle) {
-          py::gil_scoped_acquire gil;
-          auto lock = *PyRaiiLock::FromExisting(user_data->lock);
-
-          if (const bool cancelled =
-                  user_data->future.attr("cancelled")().cast<bool>();
-              !cancelled) {
-            return;
-          }
-
-          if (user_data->action->HasBeenCancelled()) {
-            return;
-          }
-          {
-            py::gil_scoped_release release;
-            user_data->action->Cancel().IgnoreError();
-          }
-        });
-        user_data->obj_refs.push_back(on_python_cancel);
-        user_data->future.attr("add_done_callback")(
-            py::handle(on_python_cancel));
-        on_python_cancel.release().dec_ref();
-
-        auto on_python_done =
-            py::cpp_function([action = action.get(), user_data](py::handle) {
-              py::gil_scoped_acquire gil;
-              if (!user_data->done.HasBeenNotified()) {
-                user_data->done.Notify();
-              }
-            });
-        user_data->obj_refs.push_back(on_python_done);
-        user_data->future.attr("add_done_callback")(py::handle(on_python_done));
-        on_python_done.release().dec_ref();
-
-        {
-          py::gil_scoped_release release;
-          thread::Select({user_data->done.OnEvent()});
-        }
+        future = std::move(*future_or);
       }
-    } catch (py::error_already_set& e) {
-      status = absl::InternalError(absl::StrCat(e.what()));
+      user_data->future = future;
     }
 
-    RETURN_IF_ERROR(status);
-
-    try {
-      auto _ = user_data->future.attr("result")();
-      return absl::OkStatus();
-    } catch (py::error_already_set& e) {
-      return absl::InternalError(absl::StrCat(e.what()));
+    if (!status.ok()) {
+      return status;
     }
+
+    // If an action is cancelled from C++ side,
+    action->SetOnCancelled([user_data]() {
+      py::gil_scoped_acquire gil;
+      auto _ = user_data->future.attr("cancel")();
+    });
+
+    {
+      py::gil_scoped_acquire gil;
+      // future.attr("add_done_callback")(
+      //     py::cpp_function([action](py::handle future) {
+      //       py::gil_scoped_acquire gil;
+      //
+      //       if (const bool cancelled = future.attr("cancelled")().cast<bool>();
+      //           !cancelled) {
+      //         return;
+      //       }
+      //
+      //       if (action->HasBeenCancelled()) {
+      //         return;
+      //       }
+      //       {
+      //         py::gil_scoped_release release;
+      //         action->Cancel().IgnoreError();
+      //       }
+      //     }));
+
+      future.attr("add_done_callback")(
+          py::handle(py::cpp_function([user_data](py::handle) {
+            py::gil_scoped_acquire gil;
+            if (!user_data->done.HasBeenNotified()) {
+              user_data->done.Notify();
+            }
+          })));
+    }
+
+    thread::Select({user_data->done.OnEvent()});
+
+    {
+      py::gil_scoped_acquire gil;
+      try {
+        auto _ = future.attr("result")();
+        status = absl::OkStatus();
+      } catch (py::error_already_set& e) {
+        status = absl::InternalError(absl::StrCat(e.what()));
+      }
+      future = py::object();
+    }
+
+    return status;
   };
 }
 
@@ -300,13 +236,49 @@ void BindActionSchema(py::handle scope, std::string_view name) {
                  std::string(action_name), std::move(input_ports),
                  std::move(output_ports), std::string(description));
            }),
-           py::kw_only(), py::arg("name"),
-           py::arg_v("inputs", std::vector<NameAndMimetype>()),
-           py::arg_v("outputs", std::vector<NameAndMimetype>()),
-           py::arg_v("description", ""))
+           py::kw_only(), py::arg("name"), py::arg_v("inputs", py::none()),
+           py::arg_v("outputs", py::none()), py::arg_v("description", ""))
       .def_readwrite("name", &ActionSchema::name)
-      .def_readwrite("inputs", &ActionSchema::inputs)
-      .def_readwrite("outputs", &ActionSchema::outputs)
+      .def(
+          "input",
+          [](ActionSchema& self, std::string_view name)
+              -> absl::StatusOr<std::reference_wrapper<ActionSchemaPort>> {
+            const auto it = self.inputs.find(name);
+            if (it == self.inputs.end()) {
+              return absl::NotFoundError(
+                  absl::StrCat("Input port '", name, "' not found."));
+            }
+            return std::ref(it->second);
+          },
+          py::return_value_policy::reference_internal)
+      .def("inputs",
+           [](const ActionSchema& self) -> py::list {
+             py::list list;
+             for (const auto& [key, value] : self.inputs) {
+               list.append(py::str(key));
+             }
+             return list;
+           })
+      .def(
+          "output",
+          [](ActionSchema& self, std::string_view name)
+              -> absl::StatusOr<std::reference_wrapper<ActionSchemaPort>> {
+            const auto it = self.outputs.find(name);
+            if (it == self.outputs.end()) {
+              return absl::NotFoundError(
+                  absl::StrCat("Output port '", name, "' not found."));
+            }
+            return std::ref(it->second);
+          },
+          py::return_value_policy::reference_internal)
+      .def("outputs",
+           [](const ActionSchema& self) -> py::list {
+             py::list list;
+             for (const auto& [key, value] : self.outputs) {
+               list.append(py::str(key));
+             }
+             return list;
+           })
       .def_readwrite("description", &ActionSchema::description)
       .def("__repr__",
            [](const ActionSchema& def) { return absl::StrCat(def); })
@@ -369,7 +341,7 @@ void BindActionRegistry(py::handle scope, std::string_view name) {
                              self->GetSchema(action_name));
             return schema;
           },
-          py::arg("name"), py::return_value_policy::reference)
+          py::arg("name"), py::return_value_policy::copy)
       .def("list_registered_actions",
            [](const std::shared_ptr<ActionRegistry>& self) {
              return self->ListRegisteredActions();
@@ -522,7 +494,12 @@ void BindAction(py::handle scope, std::string_view name) {
              return action->bound_resources().borrow_stream();
            })
       .def("get_id", &Action::id)
-      .def("get_schema", &Action::schema, py::return_value_policy::reference)
+      .def(
+          "get_schema",
+          [](const std::shared_ptr<Action>& action) -> ActionSchema {
+            return action->schema();
+          },
+          py::return_value_policy::copy)
       .def(
           "get_node",
           [](const std::shared_ptr<Action>& action, std::string_view id) {
@@ -639,14 +616,6 @@ void BindAction(py::handle scope, std::string_view name) {
             return absl::OkStatus();
           },
           py::arg("key"), py::arg("value"))
-      .def("_task_group",
-           [](const std::shared_ptr<Action>& self) -> py::object {
-             if (!self->HasBeenRun()) {
-               return py::none();
-             }
-             const auto user_data = EnsurePyUserData(self.get());
-             return user_data->task_group;
-           })
       .def(
           "remove_header",
           [](const std::shared_ptr<Action>& self, std::string_view key) {

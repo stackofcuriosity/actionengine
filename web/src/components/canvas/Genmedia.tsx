@@ -159,12 +159,14 @@ const useBlobControls = () => {
               .getInput('api_key')
               .putAndFinalize(makeTextChunk('ollama'))
             await action
-              .getInput('session_token')
-              .putAndFinalize(makeTextChunk(''))
-            await action.getInput('system_instructions').finalize()
-            await action
               .getInput('chat_input')
               .putAndFinalize(makeTextChunk(kCreatePromptPrompt))
+            await action.getInput('system_instructions').finalize()
+            await action
+              .getInput('interaction_token')
+              .putAndFinalize(makeTextChunk(''))
+            await action.getInput('config').finalize()
+            await action.getInput('tools').finalize()
 
             const outputNode = action.getOutput('output')
             const iterateOutput = async () => {
@@ -403,7 +405,7 @@ export const GenmediaExample = () => {
     await action.call()
 
     await action.getInput('api_key').putAndFinalize(makeTextChunk('ollama'))
-    await action.getInput('session_token').putAndFinalize(makeTextChunk(''))
+    await action.getInput('interaction_token').putAndFinalize(makeTextChunk(''))
 
     await action.getInput('system_instructions').finalize()
     await action
@@ -413,6 +415,9 @@ export const GenmediaExample = () => {
           'surprise me with a prompt to generate a really nice image. keep it short. only use small letters and no punctuation. only output one prompt. do NOT think much. This prompt MUST be a simple description. --nothink',
         ),
       )
+
+    await action.getInput('config').finalize()
+    await action.getInput('tools').finalize()
 
     const outputNode = action.getOutput('output')
     const iterateOutput = async () => {

@@ -290,6 +290,10 @@ absl::Status Session::RecordActionCall(std::string_view id,
     return absl::AlreadyExistsError(absl::StrCat(
         "Action with id ", id, " already exists in this session."));
   }
+  if (finalizing_) {
+    return absl::FailedPreconditionError(
+        "Session is being finalized, no more dispatch.");
+  }
   actions_.emplace(id, std::move(action));
   return absl::OkStatus();
 }

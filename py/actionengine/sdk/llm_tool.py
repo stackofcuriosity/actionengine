@@ -96,10 +96,8 @@ class LLMToolSchema(BaseModel):
         input_schema = LLMToolInputSchema()
         required = []
 
-        for _, input_port in action_schema.inputs.items():
-            python_type = action_schema.get_python_type_for_port(
-                input_port.name
-            )
+        for input_name in action_schema.inputs():
+            python_type = action_schema.get_python_type_for_port(input_name)
             json_schema_type = _ae_type_to_json_schema_type(python_type)
 
             nested_props = None
@@ -115,9 +113,9 @@ class LLMToolSchema(BaseModel):
                     ].description
                     nested_props_with_descriptions[prop_name] = prop_with_desc
 
-            input_schema.properties[input_port.name] = LLMToolInputProperty(
+            input_schema.properties[input_name] = LLMToolInputProperty(
                 type=json_schema_type,
-                description=input_port.description,
+                description=action_schema.input(input_name).description,
                 properties=nested_props,
             )
 
@@ -173,7 +171,7 @@ class LLMTool:
         self._excluded_inputs = set()
         excluded_inputs = excluded_inputs or []
         for name in excluded_inputs:
-            if name not in self._action_schema.inputs:
+            if name not in self._action_schema.inputs():
                 raise ValueError(f"Input {name} not found in action schema.")
             self._excluded_inputs.add(name)
 
@@ -184,7 +182,7 @@ class LLMTool:
         return schema
 
     def map_output_to_field(self, output_name: str, field_name: str):
-        if output_name not in self._action_schema.outputs:
+        if output_name not in self._action_schema.outputs():
             raise ValueError(
                 f"Output {output_name} not found in action schema."
             )
@@ -193,7 +191,7 @@ class LLMTool:
     def _reduce_chunked_output(
         self, output_name: str, chunked_output: list[Any]
     ):
-        if output_name not in self._action_schema.outputs:
+        if output_name not in self._action_schema.outputs():
             raise ValueError(
                 f"Output {output_name} not found in action schema."
             )
@@ -265,7 +263,7 @@ class LLMTool:
                 input_dict[name] == autofill
             ), f"Input {name} does not match autofill, this might be a security issue."
 
-        required_input_names = self._action_schema.inputs.keys()
+        required_input_names = list(self._action_schema.inputs())
         if len(input_dict) > len(required_input_names):
             raise ValueError(
                 f"Too many input fields. Expected {required_input_names}, got {input_dict.keys()}"
@@ -283,13 +281,12 @@ class LLMTool:
                 )
 
         if not self._output_to_field:
-            if self._action_schema.outputs:
-                if len(self._action_schema.outputs) == 1:
-                    self.map_output_to_field(
-                        list(self._action_schema.outputs)[0], "$"
-                    )
+            outputs = list(self._action_schema.outputs())
+            if outputs:
+                if len(outputs) == 1:
+                    self.map_output_to_field(list(outputs)[0], "$")
                 else:
-                    for output_name in self._action_schema.outputs:
+                    for output_name in outputs:
                         self.map_output_to_field(output_name, output_name)
 
         n_whole_response_maps = 0

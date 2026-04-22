@@ -26,15 +26,23 @@ def is_null_chunk(chunk: data.Chunk) -> bool:
     if chunk is None:
         return False
     return (
-            not chunk.data and chunk.metadata.mimetype == "application/octet-stream"
+        not chunk.data and chunk.metadata.mimetype == "application/octet-stream"
     )
 
 
 def wrap_pybind_object(cls: type[T], impl: U) -> T:
+    if isinstance(impl, cls):
+        return impl
+
+    if impl is None:
+        raise ValueError(
+            f"Copy constructor for {cls.__name__} requires a non-null source"
+        )
+
     wrapped = cls.__new__(cls)
     super(cls, wrapped).__init__(impl)
     if add_python_specific_attributes := getattr(
-            cls, "_add_python_specific_attributes", None
+        cls, "_add_python_specific_attributes", None
     ):
         add_python_specific_attributes(wrapped)
     return wrapped

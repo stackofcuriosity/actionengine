@@ -25,7 +25,7 @@ import { usePathname, useSearchParams } from 'next/navigation'
 import { ActionEngineContext, makeAction } from '@/helpers/actionengine'
 import {
   GENERATE_CONTENT_SCHEMA,
-  REHYDRATE_SESSION_SCHEMA,
+  REHYDRATE_INTERACTION_SCHEMA,
 } from '@/actions/chat'
 import {
   rehydrateMessages,
@@ -33,11 +33,14 @@ import {
   setChatMessagesFromAsyncNode,
 } from '@/helpers/demoChats'
 
-const setSessionTokenFromAction = async (node: AsyncNode, setSessionToken) => {
+const setInteractionTokenFromAction = async (
+  node: AsyncNode,
+  setInteractionToken,
+) => {
   node.setReaderOptions({ ordered: true, removeChunks: true, timeout: -1 })
   for await (const chunk of node) {
-    const sessionToken = new TextDecoder('utf-8').decode(chunk.data)
-    setSessionToken(sessionToken)
+    const interactionToken = new TextDecoder('utf-8').decode(chunk.data)
+    setInteractionToken(interactionToken)
   }
 }
 
@@ -93,14 +96,17 @@ export default function Page() {
       return
     }
     actionRegistry.register('generate_content', GENERATE_CONTENT_SCHEMA)
-    actionRegistry.register('rehydrate_session', REHYDRATE_SESSION_SCHEMA)
+    actionRegistry.register(
+      'rehydrate_interaction',
+      REHYDRATE_INTERACTION_SCHEMA,
+    )
   }, [actionEngine])
 
   const [messages, setMessages] = useState([])
   const [thoughts, setThoughts] = useState([])
 
   const [rehydrated, setRehydrated] = useState(false)
-  const sessionToken = useSearchParams().get('session_token') || ''
+  const interactionToken = useSearchParams().get('interaction_token') || ''
   useEffect(() => {
     if (!actionEngine.stream) {
       return
@@ -109,13 +115,13 @@ export default function Page() {
       return
     }
     const rehydrate = async () => {
-      console.log('Rehydrating session with token:', sessionToken)
-      const action = makeAction('rehydrate_session', actionEngine)
+      console.log('Rehydrating interaction with token:', interactionToken)
+      const action = makeAction('rehydrate_interaction', actionEngine)
       action.call().then()
 
       await action
-        .getInput('session_token')
-        .putAndFinalize(makeTextChunk(sessionToken || ''))
+        .getInput('interaction_token')
+        .putAndFinalize(makeTextChunk(interactionToken || ''))
 
       rehydrateMessages(
         action.getOutput('previous_messages'),
@@ -129,7 +135,7 @@ export default function Page() {
     }
     actionEngine.stream.waitUntilReady().then(() => {
       setRehydrated(true)
-      if (sessionToken) {
+      if (interactionToken) {
         rehydrate().then()
       }
     })
@@ -147,9 +153,10 @@ export default function Page() {
 
   const pathname = usePathname()
 
-  const [nextSessionToken, setNextSessionToken] = useState<string>(sessionToken)
+  const [nextInteractionToken, setNextInteractionToken] =
+    useState<string>(interactionToken)
   useEffect(() => {
-    if (!nextSessionToken) {
+    if (!nextInteractionToken) {
       return
     }
     window.history.replaceState(
@@ -157,9 +164,9 @@ export default function Page() {
       '',
       pathname +
         '?' +
-        createQueryString('session_token', nextSessionToken || ''),
+        createQueryString('interaction_token', nextInteractionToken || ''),
     )
-  }, [createQueryString, nextSessionToken, pathname])
+  }, [createQueryString, nextInteractionToken, pathname])
 
   const sendMessage = async (msg: ChatMessage) => {
     const action = makeAction('generate_content', actionEngine)
@@ -167,22 +174,23 @@ export default function Page() {
 
     setMessages((prev) => [...prev, msg])
 
-    await action
-      .getInput('session_token')
-      .putAndFinalize(makeTextChunk(sessionToken || ''))
-
-    await action.getInput('system_instructions').finalize()
-    await action.getInput('chat_input').putAndFinalize(makeTextChunk(msg.text))
     await action.getInput('api_key').putAndFinalize(makeTextChunk(apiKey))
+    await action.getInput('chat_input').putAndFinalize(makeTextChunk(msg.text))
+    await action.getInput('system_instructions').finalize()
+    await action
+      .getInput('interaction_token')
+      .putAndFinalize(makeTextChunk(interactionToken || ''))
+    await action.getInput('config').finalize()
+    await action.getInput('tools').finalize()
 
     setChatMessagesFromAsyncNode(action.getOutput('output'), setMessages).then()
     setChatMessagesFromAsyncNode(
       action.getOutput('thoughts'),
       setThoughts,
     ).then()
-    setSessionTokenFromAction(
-      action.getOutput('new_session_token'),
-      setNextSessionToken,
+    setInteractionTokenFromAction(
+      action.getOutput('new_interaction_token'),
+      setNextInteractionToken,
     ).then()
   }
 
@@ -194,7 +202,7 @@ export default function Page() {
       <div className='flex flex-1 flex-row space-x-4'>
         <div className='flex flex-col w-full items-center justify-center space-y-4 py-4'>
           <Chat
-            name={`${apiKey === 'ollama' ? 'Ollama' : 'Gemini'} session ${nextSessionToken}`}
+            name={`${apiKey === 'ollama' ? 'Ollama' : 'Gemini'} interaction ${nextInteractionToken}`}
             messages={messages}
             sendMessage={sendMessage}
             disableInput={!enableInput}
